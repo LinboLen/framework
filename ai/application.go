@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	contractsai "github.com/goravel/framework/contracts/ai"
+	"github.com/goravel/framework/errors"
 )
 
 var _ contractsai.AI = (*Application)(nil)
@@ -24,6 +25,89 @@ func NewApplication(ctx context.Context, config contractsai.Config) *Application
 }
 
 func (r *Application) Agent(agent contractsai.Agent, options ...contractsai.Option) (contractsai.Conversation, error) {
+	opts, _, provider, err := r.resolveProvider(options)
+	if err != nil {
+		return nil, err
+	}
+
+	model := opts.Model
+	middlewares := append(slices.Clone(agent.Middleware()), opts.Middlewares...)
+
+	return NewConversation(r.ctx, agent, provider, model, middlewares), nil
+}
+
+func (r *Application) Image(prompt string, options ...contractsai.Option) contractsai.ImageRequest {
+	return NewImageRequest(r.ctx, r, prompt, options...)
+}
+
+func (r *Application) putFile(ctx context.Context, file contractsai.StorableFile, options ...contractsai.Option) (contractsai.StoredFileResponse, error) {
+	_, providerName, provider, err := r.resolveProvider(options)
+	if err != nil {
+		return nil, err
+	}
+
+	fileProvider, ok := provider.(contractsai.FileProvider)
+	if !ok {
+		return nil, errors.AIProviderDoesNotSupportFiles.Args(providerName)
+	}
+
+	return fileProvider.PutFile(ctx, file)
+}
+
+func (r *Application) getFile(ctx context.Context, id string, options ...contractsai.Option) (contractsai.FileResponse, error) {
+	if id == "" {
+		return nil, errors.AIStoredFileIDEmpty
+	}
+
+	_, providerName, provider, err := r.resolveProvider(options)
+	if err != nil {
+		return nil, err
+	}
+
+	fileProvider, ok := provider.(contractsai.FileProvider)
+	if !ok {
+		return nil, errors.AIProviderDoesNotSupportFiles.Args(providerName)
+	}
+
+	return fileProvider.GetFile(ctx, id)
+}
+
+func (r *Application) deleteFile(ctx context.Context, id string, options ...contractsai.Option) error {
+	if id == "" {
+		return errors.AIStoredFileIDEmpty
+	}
+
+	_, providerName, provider, err := r.resolveProvider(options)
+	if err != nil {
+		return err
+	}
+
+	fileProvider, ok := provider.(contractsai.FileProvider)
+	if !ok {
+		return errors.AIProviderDoesNotSupportFiles.Args(providerName)
+	}
+
+	return fileProvider.DeleteFile(ctx, id)
+}
+
+func (r *Application) image(ctx context.Context, prompt contractsai.ImagePrompt, options ...contractsai.Option) (contractsai.ImageResponse, error) {
+	opts, providerName, provider, err := r.resolveProvider(options)
+	if err != nil {
+		return nil, err
+	}
+	if prompt.Model == "" {
+		prompt.Model = opts.Model
+	}
+
+	imageProvider, ok := provider.(contractsai.ImageProvider)
+	if !ok {
+		return nil, errors.AIProviderDoesNotSupportImages.Args(providerName)
+	}
+
+	return imageProvider.Image(ctx, prompt)
+}
+
+func (r *Application) resolveProvider(options []contractsai.Option) (*contractsai.Options, string, contractsai.Provider, error) {
 	opts := &contractsai.Options{}
 	for _, option := range options {
 		option(opts)
@@ -36,13 +120,10 @@ func (r *Application) Agent(agent contractsai.Agent, options ...contractsai.Opti
 
 	provider, err := r.resolver.New(providerName)
 	if err != nil {
-		return nil, err
+		return nil, "", nil, err
 	}
 
-	model := opts.Model
-	middlewares := append(slices.Clone(agent.Middleware()), opts.Middlewares...)
-
-	return NewConversation(r.ctx, agent, provider, model, middlewares), nil
+	return opts, providerName, provider, nil
 }
 
 func (r *Application) WithContext(ctx context.Context) contractsai.AI {

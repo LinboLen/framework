@@ -17,3 +17,11 @@ type Usage interface {
 	Output() int
 	Total() int
 }
+
+// ImageResponse exposes generated image bytes and provider metadata.
+type ImageResponse interface {
+	Content() ([]byte, error)
+	MimeType() string
+	Usage() Usage
+	Then(callback func(ImageResponse)) ImageResponse
+}

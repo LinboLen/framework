@@ -3,10 +3,13 @@ package ai
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	contractsai "github.com/goravel/framework/contracts/ai"
+	"github.com/goravel/framework/errors"
 	mocksai "github.com/goravel/framework/mocks/ai"
 )
 
@@ -105,9 +108,10 @@ func TestApplication_Agent(t *testing.T) {
 			assert.True(t, ok)
 
 			expectedPrompt := contractsai.AgentPrompt{
-				Agent: convImpl,
-				Input: tt.promptInput,
-				Model: tt.expectedModel,
+				Agent:         convImpl,
+				Input:         tt.promptInput,
+				Model:         tt.expectedModel,
+				ProviderState: convImpl.providerState,
 			}
 
 			agent.EXPECT().Tools().Return(nil).Once()
@@ -200,7 +204,7 @@ func TestApplication_Agent_WithMiddleware(t *testing.T) {
 	assert.True(t, ok)
 
 	mockProvider.EXPECT().
-		Prompt(ctx, contractsai.AgentPrompt{Agent: convImpl, Input: "hello", Tools: nil}).
+		Prompt(ctx, contractsai.AgentPrompt{Agent: convImpl, Input: "hello", Tools: nil, ProviderState: convImpl.providerState}).
 		Return(&stubResponse{text: "before middleware"}, nil).
 		Once()
 
@@ -230,7 +234,7 @@ func TestApplication_Agent_WithDefaultMiddleware(t *testing.T) {
 	assert.True(t, ok)
 
 	mockProvider.EXPECT().
-		Prompt(ctx, contractsai.AgentPrompt{Agent: convImpl, Input: "hello", Tools: nil}).
+		Prompt(ctx, contractsai.AgentPrompt{Agent: convImpl, Input: "hello", Tools: nil, ProviderState: convImpl.providerState}).
 		Return(&stubResponse{text: "before middleware"}, nil).
 		Once()
 
@@ -260,7 +264,7 @@ func TestApplication_Agent_MergesDefaultMiddlewareWithOptions(t *testing.T) {
 	assert.True(t, ok)
 
 	mockProvider.EXPECT().
-		Prompt(ctx, contractsai.AgentPrompt{Agent: convImpl, Input: "hello", Tools: nil}).
+		Prompt(ctx, contractsai.AgentPrompt{Agent: convImpl, Input: "hello", Tools: nil, ProviderState: convImpl.providerState}).
 		Return(&stubResponse{text: "before middleware"}, nil).
 		Once()
 
@@ -269,7 +273,302 @@ func TestApplication_Agent_MergesDefaultMiddlewareWithOptions(t *testing.T) {
 	assert.Equal(t, "before middleware after middleware after middleware", resp.Text())
 }
 
+func TestApplication_putFile(t *testing.T) {
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		options     []contractsai.Option
+		setup       func(t *testing.T, ctx context.Context, file contractsai.StorableFile) contractsai.Config
+		expectError error
+		expectID    string
+	}{
+		{
+			name:    "success",
+			ctx:     context.WithValue(context.Background(), testCtxKey("upload"), "success"),
+			options: []contractsai.Option{WithProvider("openai")},
+			setup: func(t *testing.T, ctx context.Context, file contractsai.StorableFile) contractsai.Config {
+				fileProvider := mocksai.NewFileProvider(t)
+				response := mocksai.NewStoredFileResponse(t)
+				response.EXPECT().ID().Return("file-123").Once()
+				fileProvider.EXPECT().PutFile(ctx, file).Return(response, nil).Once()
+
+				return contractsai.Config{
+					Default: "default",
+					Providers: map[string]contractsai.ProviderConfig{
+						"default": {Via: mocksai.NewProvider(t)},
+						"openai":  {Via: uploadTestProvider{fileProvider: fileProvider}},
+					},
+				}
+			},
+			expectID: "file-123",
+		},
+		{
+			name: "provider does not support files",
+			ctx:  context.Background(),
+			setup: func(t *testing.T, _ context.Context, _ contractsai.StorableFile) contractsai.Config {
+				return contractsai.Config{
+					Default: "default",
+					Providers: map[string]contractsai.ProviderConfig{
+						"default": {Via: mocksai.NewProvider(t)},
+					},
+				}
+			},
+			expectError: errors.AIProviderDoesNotSupportFiles.Args("default"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := mocksai.NewStorableFile(t)
+			config := tt.setup(t, tt.ctx, file)
+
+			app := NewApplication(context.Background(), config)
+			stored, err := app.putFile(tt.ctx, file, tt.options...)
+			assert.Equal(t, tt.expectError, err)
+			if tt.expectError != nil {
+				assert.Nil(t, stored)
+				return
+			}
+
+			require.NotNil(t, stored)
+			assert.Equal(t, tt.expectID, stored.ID())
+		})
+	}
+}
+
+func TestApplication_Image(t *testing.T) {
+	ctx := context.Background()
+	config := contractsai.Config{
+		Default: "default",
+		Providers: map[string]contractsai.ProviderConfig{
+			"default": {Via: mocksai.NewProvider(t)},
+		},
+	}
+
+	app := NewApplication(ctx, config)
+	request := app.Image("draw a cat", WithProvider("default"), WithModel("gpt-image-1"))
+
+	req, ok := request.(*imageRequest)
+	assert.True(t, ok)
+	assert.Equal(t, ctx, req.ctx)
+	assert.Equal(t, app, req.app)
+	assert.Equal(t, "draw a cat", req.prompt)
+	assert.Equal(t, "default", req.provider)
+	assert.Equal(t, "gpt-image-1", req.model)
+
+	assert.Same(t, req, request.Square())
+	assert.Same(t, req, request.Portrait())
+	assert.Same(t, req, request.Landscape())
+	assert.Same(t, req, request.Quality(contractsai.ImageQualityHigh))
+	assert.Same(t, req, request.Timeout(2*time.Second))
+
+	attachment := ImageFromByte([]byte("image"), WithMimeType("image/png"))
+	assert.Same(t, req, request.Attachments(attachment))
+	assert.Equal(t, contractsai.ImageSizeLandscape, req.size)
+	assert.Equal(t, contractsai.ImageQualityHigh, req.quality)
+	assert.Equal(t, 2*time.Second, req.timeout)
+	assert.Equal(t, []contractsai.Attachment{attachment}, req.attachments)
+}
+
+func TestImageRequest_Generate(t *testing.T) {
+	ctx := context.Background()
+	provider := &applicationImageProviderStub{}
+	config := contractsai.Config{
+		Default: "default",
+		Providers: map[string]contractsai.ProviderConfig{
+			"default": {Via: provider},
+		},
+	}
+
+	app := NewApplication(context.Background(), config)
+	attachment := ImageFromByte([]byte("image"), WithMimeType("image/png"))
+	response := &applicationImageResponseStub{}
+	provider.response = response
+
+	result, err := app.Image("draw a cat").
+		Landscape().
+		Quality(contractsai.ImageQualityHigh).
+		Attachments(attachment).
+		Timeout(3 * time.Second).
+		Generate()
+
+	require.NoError(t, err)
+	assert.Equal(t, response, result)
+	assert.Equal(t, ctx, provider.ctx)
+	assert.Equal(t, contractsai.ImagePrompt{
+		Prompt:      "draw a cat",
+		Size:        contractsai.ImageSizeLandscape,
+		Quality:     contractsai.ImageQualityHigh,
+		Attachments: []contractsai.Attachment{attachment},
+		Timeout:     3 * time.Second,
+	}, provider.prompt)
+}
+
+func TestApplication_image(t *testing.T) {
+	tests := []struct {
+		name        string
+		options     []contractsai.Option
+		setup       func() contractsai.Config
+		expectError error
+	}{
+		{
+			name:    "success",
+			options: []contractsai.Option{WithProvider("openai"), WithModel("gpt-image-override")},
+			setup: func() contractsai.Config {
+				provider := &applicationImageProviderStub{}
+				provider.response = &applicationImageResponseStub{}
+				return contractsai.Config{
+					Default: "default",
+					Providers: map[string]contractsai.ProviderConfig{
+						"default": {Via: mocksai.NewProvider(t)},
+						"openai":  {Via: provider},
+					},
+				}
+			},
+		},
+		{
+			name: "provider does not support images",
+			setup: func() contractsai.Config {
+				return contractsai.Config{
+					Default: "default",
+					Providers: map[string]contractsai.ProviderConfig{
+						"default": {Via: mocksai.NewProvider(t)},
+					},
+				}
+			},
+			expectError: errors.AIProviderDoesNotSupportImages.Args("default"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := NewApplication(context.Background(), tt.setup())
+			response, err := app.image(context.Background(), contractsai.ImagePrompt{Prompt: "draw a cat"}, tt.options...)
+			assert.Equal(t, tt.expectError, err)
+			if tt.expectError != nil {
+				assert.Nil(t, response)
+				return
+			}
+
+			require.NotNil(t, response)
+			provider, ok := app.config.Providers["openai"].Via.(*applicationImageProviderStub)
+			if ok {
+				assert.Equal(t, "gpt-image-override", provider.prompt.Model)
+			}
+		})
+	}
+}
+
+func TestApplication_getFile(t *testing.T) {
+	ctx := context.WithValue(context.Background(), testCtxKey("get"), "success")
+	fileProvider := mocksai.NewFileProvider(t)
+	response := mocksai.NewFileResponse(t)
+	response.EXPECT().ID().Return("file-123").Once()
+	fileProvider.EXPECT().GetFile(ctx, "file-123").Return(response, nil).Once()
+
+	app := NewApplication(context.Background(), contractsai.Config{
+		Default: "openai",
+		Providers: map[string]contractsai.ProviderConfig{
+			"openai": {Via: uploadTestProvider{fileProvider: fileProvider}},
+		},
+	})
+
+	file, err := app.getFile(ctx, "file-123")
+	require.NoError(t, err)
+	assert.Equal(t, "file-123", file.ID())
+}
+
+func TestApplication_getFileReturnsErrorWhenIDEmpty(t *testing.T) {
+	app := NewApplication(context.Background(), contractsai.Config{})
+	file, err := app.getFile(context.Background(), "")
+	assert.Nil(t, file)
+	assert.Equal(t, errors.AIStoredFileIDEmpty, err)
+}
+
+func TestApplication_deleteFile(t *testing.T) {
+	ctx := context.WithValue(context.Background(), testCtxKey("delete"), "success")
+	fileProvider := mocksai.NewFileProvider(t)
+	fileProvider.EXPECT().DeleteFile(ctx, "file-123").Return(nil).Once()
+
+	app := NewApplication(context.Background(), contractsai.Config{
+		Default: "openai",
+		Providers: map[string]contractsai.ProviderConfig{
+			"openai": {Via: uploadTestProvider{fileProvider: fileProvider}},
+		},
+	})
+
+	assert.NoError(t, app.deleteFile(ctx, "file-123"))
+}
+
+func TestApplication_deleteFileReturnsErrorWhenIDEmpty(t *testing.T) {
+	app := NewApplication(context.Background(), contractsai.Config{})
+	assert.Equal(t, errors.AIStoredFileIDEmpty, app.deleteFile(context.Background(), ""))
+}
+
 type applicationTestMiddleware struct{}
+
+type uploadTestProvider struct {
+	fileProvider contractsai.FileProvider
+}
+
+func (p uploadTestProvider) Prompt(context.Context, contractsai.AgentPrompt) (contractsai.Response, error) {
+	return nil, nil
+}
+
+func (p uploadTestProvider) Stream(context.Context, contractsai.AgentPrompt) (contractsai.StreamableResponse, error) {
+	return nil, nil
+}
+
+func (p uploadTestProvider) PutFile(ctx context.Context, file contractsai.StorableFile) (contractsai.StoredFileResponse, error) {
+	return p.fileProvider.PutFile(ctx, file)
+}
+
+func (p uploadTestProvider) GetFile(ctx context.Context, id string) (contractsai.FileResponse, error) {
+	return p.fileProvider.GetFile(ctx, id)
+}
+
+func (p uploadTestProvider) DeleteFile(ctx context.Context, id string) error {
+	return p.fileProvider.DeleteFile(ctx, id)
+}
+
+type applicationImageProviderStub struct {
+	ctx      context.Context
+	prompt   contractsai.ImagePrompt
+	response contractsai.ImageResponse
+	err      error
+}
+
+func (p *applicationImageProviderStub) Prompt(context.Context, contractsai.AgentPrompt) (contractsai.Response, error) {
+	return nil, nil
+}
+
+func (p *applicationImageProviderStub) Stream(context.Context, contractsai.AgentPrompt) (contractsai.StreamableResponse, error) {
+	return nil, nil
+}
+
+func (p *applicationImageProviderStub) Image(ctx context.Context, prompt contractsai.ImagePrompt) (contractsai.ImageResponse, error) {
+	p.ctx = ctx
+	p.prompt = prompt
+	return p.response, p.err
+}
+
+type applicationImageResponseStub struct{}
+
+func (r *applicationImageResponseStub) Content() ([]byte, error) {
+	return []byte("image"), nil
+}
+
+func (r *applicationImageResponseStub) MimeType() string { return "image/png" }
+
+func (r *applicationImageResponseStub) Usage() contractsai.Usage { return nil }
+
+func (r *applicationImageResponseStub) Then(callback func(contractsai.ImageResponse)) contractsai.ImageResponse {
+	if callback != nil {
+		callback(r)
+	}
+
+	return r
+}
 
 func (m *applicationTestMiddleware) Handle(ctx context.Context, prompt contractsai.AgentPrompt, next contractsai.Next) (contractsai.Response, error) {
 	response, err := next(ctx, prompt)
