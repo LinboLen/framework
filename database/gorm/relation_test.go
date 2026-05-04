@@ -1,0 +1,312 @@
+package gorm
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	gormio "gorm.io/gorm"
+	"gorm.io/gorm/callbacks"
+	"gorm.io/gorm/clause"
+	gormschema "gorm.io/gorm/schema"
+
+	contractsorm "github.com/goravel/framework/contracts/database/orm"
+	"github.com/goravel/framework/errors"
+)
+
+// stubDialector is a no-op dialector that lets us spin up a *gormio.DB without an actual
+// connection. It registers the standard callbacks so DryRun-mode SQL can still be built.
+type stubDialector struct{}
+
+func (stubDialector) Name() string { return "stub" }
+func (stubDialector) Initialize(db *gormio.DB) error {
+	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{})
+	return nil
+}
+func (stubDialector) Migrator(db *gormio.DB) gormio.Migrator             { return nil }
+func (stubDialector) DataTypeOf(*gormschema.Field) string                { return "TEXT" }
+func (stubDialector) DefaultValueOf(*gormschema.Field) clause.Expression { return clause.Expr{} }
+func (stubDialector) BindVarTo(writer clause.Writer, _ *gormio.Statement, _ any) {
+	_ = writer.WriteByte('?')
+}
+func (stubDialector) QuoteTo(writer clause.Writer, str string) {
+	_, _ = writer.WriteString(`"` + str + `"`)
+}
+func (stubDialector) Explain(sql string, _ ...any) string { return sql }
+
+func newStubGormDB(t *testing.T) *gormio.DB {
+	t.Helper()
+	db, err := gormio.Open(stubDialector{}, &gormio.Config{})
+	if err != nil {
+		t.Fatalf("open stub gorm: %v", err)
+	}
+	return db
+}
+
+// --- Test fixtures ---------------------------------------------------------
+
+type relUser struct {
+	ID      uint
+	Name    string
+	Books   []*relBook  `gorm:"foreignKey:UserID"`
+	Profile *relProfile `gorm:"foreignKey:UserID"`
+	Roles   []*relRole  `gorm:"many2many:rel_user_roles"`
+	Houses  []*relHouse `gorm:"polymorphic:Houseable"`
+	Logo    *relLogo    `gorm:"polymorphic:Logoable"`
+}
+
+type relBook struct {
+	ID       uint
+	Title    string
+	UserID   uint
+	AuthorID uint
+	Author   *relUser `gorm:"foreignKey:AuthorID"`
+}
+
+type relProfile struct {
+	ID     uint
+	Bio    string
+	UserID uint
+}
+
+type relRole struct {
+	ID   uint
+	Name string
+}
+
+type relHouse struct {
+	ID             uint
+	Address        string
+	HouseableID    uint
+	HouseableType  string
+}
+
+type relLogo struct {
+	ID           uint
+	URL          string
+	LogoableID   uint
+	LogoableType string
+}
+
+// relCountry / relPost via relUser participate in a HasManyThrough setup.
+type relCountry struct {
+	ID   uint
+	Name string
+}
+
+func (relCountry) ThroughRelations() map[string]contractsorm.ThroughRelation {
+	return map[string]contractsorm.ThroughRelation{
+		"Posts": {
+			Kind:    contractsorm.HasManyThrough,
+			Related: &relPost{},
+			Through: &relUser{},
+		},
+		"FirstPost": {
+			Kind:    contractsorm.HasOneThrough,
+			Related: &relPost{},
+			Through: &relUser{},
+		},
+		"NoRelated": {
+			Kind: contractsorm.HasManyThrough,
+		},
+		"BadKind": {
+			Kind:    "weird",
+			Related: &relPost{},
+			Through: &relUser{},
+		},
+	}
+}
+
+type relPost struct {
+	ID     uint
+	Title  string
+	UserID uint
+}
+
+// --- Pure helpers ----------------------------------------------------------
+
+func TestSplitRelation(t *testing.T) {
+	cases := []struct {
+		in     string
+		head   string
+		tail   string
+	}{
+		{"", "", ""},
+		{"Books", "Books", ""},
+		{"Books.Author", "Books", "Author"},
+		{"Books.Author.Profile", "Books", "Author.Profile"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			h, ta := splitRelation(tc.in)
+			assert.Equal(t, tc.head, h)
+			assert.Equal(t, tc.tail, ta)
+		})
+	}
+}
+
+func TestUnwrapPointer(t *testing.T) {
+	v := &relUser{Name: "x"}
+	out := unwrapPointer(v)
+	u, ok := out.(relUser)
+	assert.True(t, ok)
+	assert.Equal(t, "x", u.Name)
+
+	// non-pointer returned as-is
+	plain := relUser{Name: "y"}
+	out = unwrapPointer(plain)
+	u2, ok := out.(relUser)
+	assert.True(t, ok)
+	assert.Equal(t, "y", u2.Name)
+
+	// nil pointer returned unchanged (not nil-deref)
+	var np *relUser
+	out = unwrapPointer(np)
+	assert.Equal(t, np, out)
+}
+
+func TestDefaultStr(t *testing.T) {
+	assert.Equal(t, "id", defaultStr("", "id"))
+	assert.Equal(t, "uid", defaultStr("uid", "id"))
+}
+
+// --- Schema-dependent helpers ---------------------------------------------
+
+func TestTableNameFor(t *testing.T) {
+	db := newStubGormDB(t)
+	name, err := tableNameFor(db, &relUser{})
+	assert.NoError(t, err)
+	assert.Equal(t, "rel_users", name)
+
+	// Invalid (non-struct) model surfaces parse error.
+	_, err = tableNameFor(db, "not-a-model")
+	assert.Error(t, err)
+}
+
+// --- resolveRelation across all kinds -------------------------------------
+
+func TestResolveRelation_Empty(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &relUser{}, "")
+	assert.True(t, errors.Is(err, errors.OrmQueryEmptyRelation))
+}
+
+func TestResolveRelation_NotFound(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &relUser{}, "Missing")
+	assert.True(t, errors.Is(err, errors.OrmRelationNotFound))
+}
+
+func TestResolveRelation_HasMany(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Books")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindHasMany, desc.kind)
+	assert.Equal(t, "rel_users", desc.parentTable)
+	assert.Equal(t, "rel_books", desc.relatedTable)
+	assert.NotEmpty(t, desc.references)
+}
+
+func TestResolveRelation_HasOne(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Profile")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindHasOne, desc.kind)
+	assert.Equal(t, "rel_profiles", desc.relatedTable)
+}
+
+func TestResolveRelation_BelongsTo(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relBook{}, "Author")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindBelongsTo, desc.kind)
+	assert.Equal(t, "rel_users", desc.relatedTable)
+}
+
+func TestResolveRelation_Many2Many(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Roles")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindMany2Many, desc.kind)
+	assert.Equal(t, "rel_user_roles", desc.pivotTable)
+	assert.Equal(t, "rel_users", desc.pivotParentRef.primaryTable)
+	assert.Equal(t, "rel_roles", desc.pivotRelatedRef.primaryTable)
+}
+
+func TestResolveRelation_MorphMany(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Houses")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindMorphMany, desc.kind)
+	assert.Equal(t, "houseable_type", desc.morphTypeColumn)
+	assert.Equal(t, "houseable_id", desc.morphIDColumn)
+	assert.NotEmpty(t, desc.references)
+}
+
+func TestResolveRelation_MorphOne(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Logo")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindMorphOne, desc.kind)
+	assert.Equal(t, "logoable_type", desc.morphTypeColumn)
+}
+
+func TestResolveRelation_Nested(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Books.Author")
+	assert.NoError(t, err)
+	assert.Equal(t, "Books", desc.name)
+	assert.NotNil(t, desc.nested)
+	assert.Equal(t, "Author", desc.nested.name)
+	assert.Equal(t, relKindBelongsTo, desc.nested.kind)
+}
+
+func TestResolveRelation_HasManyThrough(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relCountry{}, "Posts")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindHasManyThrough, desc.kind)
+	assert.Equal(t, "rel_posts", desc.relatedTable)
+	assert.Equal(t, "rel_users", desc.throughTable)
+	// defaultStr should fill empty keys with "id"
+	assert.Equal(t, "id", desc.firstKey)
+	assert.Equal(t, "id", desc.secondKey)
+	assert.Equal(t, "id", desc.localKey)
+	assert.Equal(t, "id", desc.secondLocalKey)
+}
+
+func TestResolveRelation_HasOneThrough(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relCountry{}, "FirstPost")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindHasOneThrough, desc.kind)
+}
+
+func TestResolveRelation_ThroughNotConfigured(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &relCountry{}, "NoRelated")
+	assert.True(t, errors.Is(err, errors.OrmRelationThroughNotConfigured))
+}
+
+func TestResolveRelation_ThroughBadKind(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &relCountry{}, "BadKind")
+	assert.True(t, errors.Is(err, errors.OrmRelationUnsupported))
+}
+
+func TestResolveRelation_ThroughNotImplemented(t *testing.T) {
+	db := newStubGormDB(t)
+	// relUser does NOT implement ModelWithThroughRelations.
+	_, err := resolveRelation(db, &relUser{}, "Anything")
+	assert.True(t, errors.Is(err, errors.OrmRelationNotFound))
+}
+
+// Sanity: relatedModel is a fresh pointer to the related struct type.
+func TestResolveRelation_RelatedModelType(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &relUser{}, "Books")
+	assert.NoError(t, err)
+	rt := reflect.TypeOf(desc.relatedModel)
+	assert.Equal(t, reflect.Pointer, rt.Kind())
+	assert.Equal(t, "relBook", rt.Elem().Name())
+}
