@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -271,6 +272,33 @@ func (s *WithRelationTestSuite) TestWithRelationOnly() {
 			s.Nil(loaded.Address, "Address should not be loaded after WithRelationOnly")
 		})
 	}
+}
+
+// TestWithRelation_ChunkedIN verifies that the loader splits IN clauses into batches when the
+// parent count exceeds the chunk size, working around hard limits like Oracle 1000 / SQLite 999.
+// We use sqlite (which has the strictest default of 999) and seed > 999 parents to confirm.
+func (s *WithRelationTestSuite) TestWithRelation_ChunkedIN() {
+	q := s.sqlite()
+	if q == nil {
+		return
+	}
+	const total = 1100 // > SQLite's default SQLITE_MAX_VARIABLE_NUMBER of 999
+
+	for i := 0; i < total; i++ {
+		u := &User{Name: fmt.Sprintf("wr_chunk_%04d", i), Books: []*Book{{Name: fmt.Sprintf("wr_chunk_b_%04d", i)}}}
+		s.Nil(q.Query().Select(orm.Associations).Create(&u))
+	}
+
+	var users []User
+	s.Nil(q.Query().Where("name like ?", "wr_chunk_%").
+		WithRelation("Books").Get(&users))
+	s.Len(users, total, "all parents should be returned")
+
+	loaded := 0
+	for _, u := range users {
+		loaded += len(u.Books)
+	}
+	s.Equal(total, loaded, "every parent should have its book loaded across chunked IN queries")
 }
 
 // ---------------------------------------------------------------------------

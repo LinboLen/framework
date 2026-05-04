@@ -11,6 +11,16 @@ import (
 	"github.com/goravel/framework/errors"
 )
 
+// defaultEagerLoadChunkSize is the WHERE IN list size at which we split a single eager-load
+// query into multiple round-trips. 1000 covers the strictest mainstream limits:
+// Oracle's hard cap of 1000 expressions and SQLite's default SQLITE_MAX_VARIABLE_NUMBER of 999.
+// PostgreSQL/MySQL/SQL Server have higher limits but their planners also slow down dramatically
+// past a few thousand entries, so chunking is a net win even where it isn't strictly required.
+//
+// The size can be overridden per-app via the `database.eager_load_chunk_size` config key. A value
+// <= 0 disables chunking entirely (single IN clause regardless of length).
+const defaultEagerLoadChunkSize = 1000
+
 // applyEagerLoads runs all queued WithRelation entries against the just-loaded dest. It must be
 // called by terminal methods (Get / Find / First / FirstOrFail / FirstOr / Cursor) after the main
 // query has populated dest, and only when conditions.eagerLoad is non-empty.
@@ -93,8 +103,9 @@ func (r *Query) loadHasOneOrMany(parents []reflect.Value, parentModel any, desc 
 		return r.maybeRecurseEmpty(parents, entry.relation, isMany, nested)
 	}
 
-	inner := r.freshSession().Table(desc.relatedTable).Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(ref.foreignColumn)), keys)
-	rows, err := r.runRelatedQuery(inner, desc, entry, []string{ref.foreignColumn})
+	rows, err := r.runChunkedRelatedQuery(keys, desc, entry, []string{ref.foreignColumn}, func(chunk []any) *gormio.DB {
+		return r.freshSession().Table(desc.relatedTable).Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(ref.foreignColumn)), chunk)
+	})
 	if err != nil {
 		return err
 	}
@@ -141,8 +152,9 @@ func (r *Query) loadBelongsTo(parents []reflect.Value, parentModel any, desc *re
 		return r.maybeRecurseEmpty(parents, entry.relation, false, nested)
 	}
 
-	inner := r.freshSession().Table(desc.relatedTable).Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(ref.primaryColumn)), keys)
-	rows, err := r.runRelatedQuery(inner, desc, entry, []string{ref.primaryColumn})
+	rows, err := r.runChunkedRelatedQuery(keys, desc, entry, []string{ref.primaryColumn}, func(chunk []any) *gormio.DB {
+		return r.freshSession().Table(desc.relatedTable).Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(ref.primaryColumn)), chunk)
+	})
 	if err != nil {
 		return err
 	}
@@ -187,11 +199,12 @@ func (r *Query) loadMorph(parents []reflect.Value, parentModel any, desc *relati
 		return r.maybeRecurseEmpty(parents, entry.relation, isMany, nested)
 	}
 
-	inner := r.freshSession().
-		Table(desc.relatedTable).
-		Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(ref.foreignColumn)), keys).
-		Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.relatedTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
-	rows, err := r.runRelatedQuery(inner, desc, entry, []string{ref.foreignColumn, desc.morphTypeColumn})
+	rows, err := r.runChunkedRelatedQuery(keys, desc, entry, []string{ref.foreignColumn, desc.morphTypeColumn}, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.relatedTable).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(ref.foreignColumn)), chunk).
+			Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.relatedTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
+	})
 	if err != nil {
 		return err
 	}
@@ -235,12 +248,13 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 	pivotParentCol := desc.pivotParentRef.foreignColumn
 	pivotRelatedCol := desc.pivotRelatedRef.foreignColumn
 
-	var pivotRows []map[string]any
-	if err := r.freshSession().
-		Table(desc.pivotTable).
-		Select(pivotParentCol, pivotRelatedCol).
-		Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(pivotParentCol)), keys).
-		Find(&pivotRows).Error; err != nil {
+	pivotRows, err := r.chunkedFindMaps(keys, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.pivotTable).
+			Select(pivotParentCol, pivotRelatedCol).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(pivotParentCol)), chunk)
+	})
+	if err != nil {
 		return err
 	}
 	if len(pivotRows) == 0 {
@@ -259,10 +273,11 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 		relatedKeys = append(relatedKeys, v)
 	}
 
-	inner := r.freshSession().
-		Table(desc.relatedTable).
-		Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(desc.pivotRelatedRef.primaryColumn)), relatedKeys)
-	rows, err := r.runRelatedQuery(inner, desc, entry, []string{desc.pivotRelatedRef.primaryColumn})
+	rows, err := r.runChunkedRelatedQuery(relatedKeys, desc, entry, []string{desc.pivotRelatedRef.primaryColumn}, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.relatedTable).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(desc.pivotRelatedRef.primaryColumn)), chunk)
+	})
 	if err != nil {
 		return err
 	}
@@ -311,12 +326,13 @@ func (r *Query) loadThrough(parents []reflect.Value, parentModel any, desc *rela
 		return r.maybeRecurseEmpty(parents, entry.relation, isMany, nested)
 	}
 
-	var throughRows []map[string]any
-	if err := r.freshSession().
-		Table(desc.throughTable).
-		Select(desc.firstKey, desc.secondLocalKey).
-		Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.throughTable), quoteIdent(desc.firstKey)), keys).
-		Find(&throughRows).Error; err != nil {
+	throughRows, err := r.chunkedFindMaps(keys, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.throughTable).
+			Select(desc.firstKey, desc.secondLocalKey).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.throughTable), quoteIdent(desc.firstKey)), chunk)
+	})
+	if err != nil {
 		return err
 	}
 	if len(throughRows) == 0 {
@@ -335,10 +351,11 @@ func (r *Query) loadThrough(parents []reflect.Value, parentModel any, desc *rela
 		secondKeys = append(secondKeys, v)
 	}
 
-	inner := r.freshSession().
-		Table(desc.relatedTable).
-		Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(desc.secondKey)), secondKeys)
-	rows, err := r.runRelatedQuery(inner, desc, entry, []string{desc.secondKey})
+	rows, err := r.runChunkedRelatedQuery(secondKeys, desc, entry, []string{desc.secondKey}, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.relatedTable).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(desc.secondKey)), chunk)
+	})
 	if err != nil {
 		return err
 	}
@@ -416,6 +433,41 @@ func (r *Query) runRelatedQuery(inner *gormio.DB, desc *relationDescriptor, entr
 		out = append(out, slice.Index(i))
 	}
 	return out, nil
+}
+
+// runChunkedRelatedQuery runs runRelatedQuery once per chunk of keys and concatenates rows. Each
+// chunk gets a freshly built inner query from buildInner so the user's callback / column pruning
+// is applied per-chunk.
+//
+// Note: when entry.callback installs a LIMIT, that LIMIT applies *per chunk*, not globally —
+// same semantics as Eloquent's chunkById iteration and unavoidable for any chunked IN approach.
+func (r *Query) runChunkedRelatedQuery(keys []any, desc *relationDescriptor, entry eagerLoadEntry, requiredCols []string, buildInner func(chunk []any) *gormio.DB) ([]reflect.Value, error) {
+	chunks := chunkKeys(keys, r.chunkSize())
+	var all []reflect.Value
+	for _, chunk := range chunks {
+		rows, err := r.runRelatedQuery(buildInner(chunk), desc, entry, requiredCols)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+	}
+	return all, nil
+}
+
+// chunkedFindMaps runs the pivot / through intermediate query in chunks of keys and accumulates
+// results into a single []map[string]any. Used by loadMany2Many and loadThrough for the lookup
+// queries that don't go through runRelatedQuery.
+func (r *Query) chunkedFindMaps(keys []any, buildQuery func(chunk []any) *gormio.DB) ([]map[string]any, error) {
+	chunks := chunkKeys(keys, r.chunkSize())
+	var all []map[string]any
+	for _, chunk := range chunks {
+		var rows []map[string]any
+		if err := buildQuery(chunk).Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+	}
+	return all, nil
 }
 
 // assignToParents writes the dictionary entries onto each parent's relation field using
@@ -556,6 +608,33 @@ func dictKey(v any) string {
 		return x
 	}
 	return fmt.Sprint(v)
+}
+
+// chunkSize returns the eager-load IN-clause chunk size, falling back to the default when the
+// config value is unset or invalid. A non-positive value disables chunking.
+func (r *Query) chunkSize() int {
+	if r.config == nil {
+		return defaultEagerLoadChunkSize
+	}
+	v := r.config.GetInt("database.eager_load_chunk_size", defaultEagerLoadChunkSize)
+	if v == 0 {
+		return defaultEagerLoadChunkSize
+	}
+	return v
+}
+
+// chunkKeys splits keys into batches of at most size. Returns the input unchanged in a single
+// batch when size <= 0 or len(keys) <= size, which lets callers stay on the cheap single-query
+// path for typical workloads.
+func chunkKeys(keys []any, size int) [][]any {
+	if size <= 0 || len(keys) <= size {
+		return [][]any{keys}
+	}
+	out := make([][]any, 0, (len(keys)+size-1)/size)
+	for i := 0; i < len(keys); i += size {
+		out = append(out, keys[i:min(i+size, len(keys))])
+	}
+	return out
 }
 
 // containsCol checks whether col (or "<table>.col") already appears in cols.
