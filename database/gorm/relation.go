@@ -30,12 +30,10 @@ const (
 // referenceKey describes one column-pair from a GORM Reference, with each side already qualified
 // by table name. PrimaryKey/ForeignKey naming follows GORM's convention.
 type referenceKey struct {
-	primaryTable    string
-	primaryColumn   string
-	foreignTable    string
-	foreignColumn   string
-	primaryValue    string // populated for polymorphic type-column references
-	ownPrimaryKey   bool
+	primaryTable  string
+	primaryColumn string
+	foreignTable  string
+	foreignColumn string
 }
 
 // relationDescriptor is the resolver's normalised view of a relationship. It lets the
@@ -50,8 +48,8 @@ type relationDescriptor struct {
 	references   []referenceKey
 
 	// many-to-many specifics
-	pivotTable     string
-	pivotParentRef referenceKey
+	pivotTable      string
+	pivotParentRef  referenceKey
 	pivotRelatedRef referenceKey
 
 	// polymorphic specifics
@@ -60,11 +58,11 @@ type relationDescriptor struct {
 	morphValue      string // e.g. "users"
 
 	// through specifics
-	throughTable string
-	throughModel any
-	firstKey     string // FK on through pointing at parent
-	secondKey    string // FK on related pointing at through
-	localKey     string // PK on parent
+	throughTable   string
+	throughModel   any
+	firstKey       string // FK on through pointing at parent
+	secondKey      string // FK on related pointing at through
+	localKey       string // PK on parent
 	secondLocalKey string // PK on through
 
 	// next link for nested resolution (e.g. "Books.Author")
@@ -190,7 +188,6 @@ func descriptorFromGormRelation(parentSchema *gormschema.Schema, parentTable, na
 				primaryColumn: ref.PrimaryKey.DBName,
 				foreignTable:  related.Table,
 				foreignColumn: ref.ForeignKey.DBName,
-				ownPrimaryKey: ref.OwnPrimaryKey,
 			})
 		}
 		if rel.Type == gormschema.HasOne {
@@ -209,7 +206,6 @@ func descriptorFromGormRelation(parentSchema *gormschema.Schema, parentTable, na
 				primaryColumn: ref.PrimaryKey.DBName,
 				foreignTable:  parentTable,
 				foreignColumn: ref.ForeignKey.DBName,
-				ownPrimaryKey: ref.OwnPrimaryKey,
 			})
 		}
 		return desc, nil
