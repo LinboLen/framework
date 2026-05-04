@@ -95,8 +95,9 @@ type QueryWithRelations interface {
 	// WithAvg adds sub-select queries to include the average of the relation's column.
 	WithAvg(relation, column string, args ...any) Query
 	// WithExists adds sub-select queries to include the existence of related models. The result
-	// is yielded as a 0/1 integer column - Goravel does not have a $casts-style sugar to coerce
-	// the value to a boolean automatically.
+	// is emitted as `CASE WHEN EXISTS (...) THEN 1 ELSE 0 END` for cross-dialect portability
+	// (SQL Server has no boolean literal), but the dest field may be either `bool` or an integer
+	// type - Go's database/sql layer converts 0/1 ints to bool automatically.
 	WithExists(relations ...string) Query
 }
 

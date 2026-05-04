@@ -442,7 +442,7 @@ type userAggregates struct {
 	BooksMinID       *int64   `gorm:"column:books_min_id"`
 	BooksSumID       *int64   `gorm:"column:books_sum_id"`
 	BooksAvgID       *float64 `gorm:"column:books_avg_id"`
-	BooksExists      int64    `gorm:"column:books_exists"`
+	BooksExists      bool     `gorm:"column:books_exists"`
 }
 
 func (s *QueriesRelationshipsTestSuite) TestWithCount_Retrieve() {
@@ -536,8 +536,8 @@ func (s *QueriesRelationshipsTestSuite) TestWithExists_Retrieve() {
 				Get(&rows))
 
 			s.Len(rows, 2)
-			s.Equal(int64(0), rows[0].BooksExists, "agg_exist_no has no books")
-			s.Equal(int64(1), rows[1].BooksExists, "agg_exist_yes has books")
+			s.False(rows[0].BooksExists, "agg_exist_no has no books")
+			s.True(rows[1].BooksExists, "agg_exist_yes has books")
 		})
 	}
 }

@@ -214,8 +214,9 @@ func (r *Query) WithAvg(relation, column string, args ...any) contractsorm.Query
 }
 
 // WithExists adds sub-select queries to include the existence of related models. The result is
-// yielded as a 0/1 integer column - Goravel does not have a $casts-style sugar to coerce the
-// value to a boolean automatically.
+// emitted as `CASE WHEN EXISTS (...) THEN 1 ELSE 0 END` for cross-dialect portability (SQL Server
+// has no boolean literal). The dest field may be either `bool` or an integer type - Go's
+// database/sql layer converts 0/1 ints to bool automatically.
 func (r *Query) WithExists(relations ...string) contractsorm.Query {
 	current := r
 	for _, rel := range relations {
