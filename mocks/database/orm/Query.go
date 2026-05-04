@@ -5939,6 +5939,120 @@ func (_c *Query_WithMin_Call) RunAndReturn(run func(string, string, ...interface
 	return _c
 }
 
+// WithRelation provides a mock function with given fields: args
+func (_m *Query) WithRelation(args ...interface{}) orm.Query {
+	var _ca []interface{}
+	_ca = append(_ca, args...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WithRelation")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(...interface{}) orm.Query); ok {
+		r0 = rf(args...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Query_WithRelation_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WithRelation'
+type Query_WithRelation_Call struct {
+	*mock.Call
+}
+
+// WithRelation is a helper method to define mock.On call
+//   - args ...interface{}
+func (_e *Query_Expecter) WithRelation(args ...interface{}) *Query_WithRelation_Call {
+	return &Query_WithRelation_Call{Call: _e.mock.On("WithRelation",
+		append([]interface{}{}, args...)...)}
+}
+
+func (_c *Query_WithRelation_Call) Run(run func(args ...interface{})) *Query_WithRelation_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]interface{}, len(args)-0)
+		for i, a := range args[0:] {
+			if a != nil {
+				variadicArgs[i] = a.(interface{})
+			}
+		}
+		run(variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Query_WithRelation_Call) Return(_a0 orm.Query) *Query_WithRelation_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Query_WithRelation_Call) RunAndReturn(run func(...interface{}) orm.Query) *Query_WithRelation_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// WithRelationOnly provides a mock function with given fields: args
+func (_m *Query) WithRelationOnly(args ...interface{}) orm.Query {
+	var _ca []interface{}
+	_ca = append(_ca, args...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WithRelationOnly")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(...interface{}) orm.Query); ok {
+		r0 = rf(args...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Query_WithRelationOnly_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WithRelationOnly'
+type Query_WithRelationOnly_Call struct {
+	*mock.Call
+}
+
+// WithRelationOnly is a helper method to define mock.On call
+//   - args ...interface{}
+func (_e *Query_Expecter) WithRelationOnly(args ...interface{}) *Query_WithRelationOnly_Call {
+	return &Query_WithRelationOnly_Call{Call: _e.mock.On("WithRelationOnly",
+		append([]interface{}{}, args...)...)}
+}
+
+func (_c *Query_WithRelationOnly_Call) Run(run func(args ...interface{})) *Query_WithRelationOnly_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]interface{}, len(args)-0)
+		for i, a := range args[0:] {
+			if a != nil {
+				variadicArgs[i] = a.(interface{})
+			}
+		}
+		run(variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Query_WithRelationOnly_Call) Return(_a0 orm.Query) *Query_WithRelationOnly_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Query_WithRelationOnly_Call) RunAndReturn(run func(...interface{}) orm.Query) *Query_WithRelationOnly_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // WithSum provides a mock function with given fields: relation, column, args
 func (_m *Query) WithSum(relation string, column string, args ...interface{}) orm.Query {
 	var _ca []interface{}
@@ -6150,6 +6264,67 @@ func (_c *Query_WithoutGlobalScopes_Call) Return(_a0 orm.Query) *Query_WithoutGl
 }
 
 func (_c *Query_WithoutGlobalScopes_Call) RunAndReturn(run func(...string) orm.Query) *Query_WithoutGlobalScopes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// WithoutRelation provides a mock function with given fields: relations
+func (_m *Query) WithoutRelation(relations ...string) orm.Query {
+	_va := make([]interface{}, len(relations))
+	for _i := range relations {
+		_va[_i] = relations[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WithoutRelation")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(...string) orm.Query); ok {
+		r0 = rf(relations...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Query_WithoutRelation_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WithoutRelation'
+type Query_WithoutRelation_Call struct {
+	*mock.Call
+}
+
+// WithoutRelation is a helper method to define mock.On call
+//   - relations ...string
+func (_e *Query_Expecter) WithoutRelation(relations ...interface{}) *Query_WithoutRelation_Call {
+	return &Query_WithoutRelation_Call{Call: _e.mock.On("WithoutRelation",
+		append([]interface{}{}, relations...)...)}
+}
+
+func (_c *Query_WithoutRelation_Call) Run(run func(relations ...string)) *Query_WithoutRelation_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]string, len(args)-0)
+		for i, a := range args[0:] {
+			if a != nil {
+				variadicArgs[i] = a.(string)
+			}
+		}
+		run(variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Query_WithoutRelation_Call) Return(_a0 orm.Query) *Query_WithoutRelation_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Query_WithoutRelation_Call) RunAndReturn(run func(...string) orm.Query) *Query_WithoutRelation_Call {
 	_c.Call.Return(run)
 	return _c
 }

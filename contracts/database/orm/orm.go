@@ -225,10 +225,30 @@ type Query interface {
 	WithoutEvents() Query
 	// WithoutGlobalScopes disables all global scopes for the query.
 	WithoutGlobalScopes(names ...string) Query
+	// WithoutRelation removes the given relations from the eager-load list set by WithRelation.
+	// Mirrors fedaco's without().
+	WithoutRelation(relations ...string) Query
 	// WithTrashed allows soft deleted models to be included in the results.
 	WithTrashed() Query
 	// With returns a new query instance with the given relationships eager loaded.
 	With(query string, args ...any) Query
+	// WithRelation eagerly loads the given relationships using Goravel's own loader (does not
+	// delegate to GORM Preload). Accepts the union of fedaco's with(...) shapes:
+	//
+	//   q.WithRelation("Books")
+	//   q.WithRelation("Books", cb)                                        // string + callback
+	//   q.WithRelation("Books", "Roles", "Address")                        // multiple strings
+	//   q.WithRelation("Books:id,name")                                    // column pruning
+	//   q.WithRelation(map[string]orm.RelationCallback{"Books": cb})       // map of name -> callback
+	//   q.WithRelation([]any{"Books", map[string]orm.RelationCallback{"Roles": cb}})
+	//   q.WithRelation("Books.Author")                                     // nested
+	//   q.WithRelation("Books.Author", cb)                                 // nested + callback
+	//
+	// Unlike With, WithRelation supports HasOneThrough / HasManyThrough.
+	WithRelation(args ...any) Query
+	// WithRelationOnly clears the eager-load list set by WithRelation, then adds the given
+	// relations. Mirrors fedaco's withOnly().
+	WithRelationOnly(args ...any) Query
 }
 
 type QueryWithContext interface {

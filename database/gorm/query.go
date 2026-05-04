@@ -1836,6 +1836,9 @@ func (r *Query) restoring(dest any) error {
 }
 
 func (r *Query) retrieved(dest any) error {
+	if err := r.applyEagerLoads(dest); err != nil {
+		return err
+	}
 	if isSlice(dest) {
 		return nil
 	}

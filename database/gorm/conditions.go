@@ -22,6 +22,7 @@ type Conditions struct {
 	selectSubs          []selectSub
 	where               []contractsdriver.Where
 	with                []With
+	eagerLoad           []eagerLoadEntry
 	relations           []relationExistence
 	distinct            bool
 	lockForUpdate       bool
