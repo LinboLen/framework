@@ -105,9 +105,12 @@ type Query interface {
 	Join(query string, args ...any) Query
 	// Limit the number of records returned.
 	Limit(limit int) Query
-	// Load loads a relationship for the model.
+	// Load loads a relationship for the model. args may be a callback or other
+	// shapes accepted by With (e.g. "Books:id,name" column pruning is supported by
+	// embedding the column list in relation; a callback may be passed via args).
 	Load(dest any, relation string, args ...any) error
 	// LoadMissing loads a relationship for the model that is not already loaded.
+	// args follow the same shapes as Load.
 	LoadMissing(dest any, relation string, args ...any) error
 	// LockForUpdate locks the selected rows in the table for updating.
 	LockForUpdate() Query
@@ -225,30 +228,29 @@ type Query interface {
 	WithoutEvents() Query
 	// WithoutGlobalScopes disables all global scopes for the query.
 	WithoutGlobalScopes(names ...string) Query
-	// WithoutRelation removes the given relations from the eager-load list set by WithRelation.
+	// Without removes the given relations from the eager-load list set by With.
 	// Mirrors fedaco's without().
-	WithoutRelation(relations ...string) Query
+	Without(relations ...string) Query
 	// WithTrashed allows soft deleted models to be included in the results.
 	WithTrashed() Query
-	// With returns a new query instance with the given relationships eager loaded.
-	With(query string, args ...any) Query
-	// WithRelation eagerly loads the given relationships using Goravel's own loader (does not
+	// With eagerly loads the given relationships using Goravel's own loader (does not
 	// delegate to GORM Preload). Accepts the union of fedaco's with(...) shapes:
 	//
-	//   q.WithRelation("Books")
-	//   q.WithRelation("Books", cb)                                        // string + callback
-	//   q.WithRelation("Books", "Roles", "Address")                        // multiple strings
-	//   q.WithRelation("Books:id,name")                                    // column pruning
-	//   q.WithRelation(map[string]orm.RelationCallback{"Books": cb})       // map of name -> callback
-	//   q.WithRelation([]any{"Books", map[string]orm.RelationCallback{"Roles": cb}})
-	//   q.WithRelation("Books.Author")                                     // nested
-	//   q.WithRelation("Books.Author", cb)                                 // nested + callback
+	//   q.With("Books")
+	//   q.With("Books", cb)                                        // string + callback
+	//   q.With("Books", "Roles", "Address")                        // multiple strings
+	//   q.With("Books:id,name")                                    // column pruning
+	//   q.With(map[string]orm.RelationCallback{"Books": cb})       // map of name -> callback
+	//   q.With([]any{"Books", map[string]orm.RelationCallback{"Roles": cb}})
+	//   q.With("Books.Author")                                     // nested
+	//   q.With("Books.Author", cb)                                 // nested + callback
 	//
-	// Unlike With, WithRelation supports HasOneThrough / HasManyThrough.
-	WithRelation(args ...any) Query
-	// WithRelationOnly clears the eager-load list set by WithRelation, then adds the given
+	// Supports HasOne, HasMany, BelongsTo, BelongsToMany, MorphOne, MorphMany,
+	// HasOneThrough and HasManyThrough.
+	With(args ...any) Query
+	// WithOnly clears the eager-load list set by With, then adds the given
 	// relations. Mirrors fedaco's withOnly().
-	WithRelationOnly(args ...any) Query
+	WithOnly(args ...any) Query
 }
 
 type QueryWithContext interface {

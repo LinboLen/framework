@@ -21,7 +21,7 @@ import (
 // <= 0 disables chunking entirely (single IN clause regardless of length).
 const defaultEagerLoadChunkSize = 1000
 
-// applyEagerLoads runs all queued WithRelation entries against the just-loaded dest. It must be
+// applyEagerLoads runs all queued With entries against the just-loaded dest. It must be
 // called by terminal methods (Get / Find / First / FirstOrFail / FirstOr / Cursor) after the main
 // query has populated dest, and only when conditions.eagerLoad is non-empty.
 func (r *Query) applyEagerLoads(dest any) error {

@@ -180,9 +180,9 @@ var (
 	OrmRelationInvalidAggregate     = New("invalid aggregate function %q, expected one of count, max, min, sum, avg, exists")
 	OrmRelationMorphTypesEmpty      = New("hasMorph requires at least one morph type")
 	OrmRelationThroughNotConfigured = New("through relation %q must be declared via the ThroughRelations() method on model %s")
-	OrmEagerLoadInvalidArgument     = New("invalid argument %T passed to WithRelation; expected string, []string, []any, map[string]orm.RelationCallback, or string + callback")
+	OrmEagerLoadInvalidArgument     = New("invalid argument %T passed to With; expected string, []string, []any, map[string]orm.RelationCallback, or string + callback")
 	OrmEagerLoadCannotAssign        = New("cannot assign eager-loaded rows to field %q on model %s; field must be *Model, []*Model or []Model")
-	OrmEagerLoadEmptyRelation       = New("WithRelation received an empty relation name")
+	OrmEagerLoadEmptyRelation       = New("With received an empty relation name")
 
 	PackageConfigKeyExists       = New("config key '%s' already exists,using ReplaceConfig instead if you want to update it")
 	PackageFacadeNotFound        = New("facade %s not found")

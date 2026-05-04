@@ -3418,7 +3418,9 @@ func (s *QueryTestSuite) TestLoad() {
 					s.True(user1.ID > 0)
 					s.Nil(user1.Address)
 					s.Equal(0, len(user1.Books))
-					s.Nil(query.Query().Load(&user1, "Books", "name = ?", "load_book0"))
+					s.Nil(query.Query().Load(&user1, "Books", func(query contractsorm.Query) contractsorm.Query {
+						return query.Where("name = ?", "load_book0")
+					}))
 					s.True(user1.ID > 0)
 					s.Nil(user1.Address)
 					s.Equal(1, len(user1.Books))
@@ -3531,7 +3533,9 @@ func (s *QueryTestSuite) TestLoadMissing() {
 					description: "don't load when not missing",
 					setup: func(description string) {
 						var user1 User
-						s.Nil(query.Query().With("Books", "name = ?", "load_missing_book0").Find(&user1, user.ID))
+						s.Nil(query.Query().With("Books", func(query contractsorm.Query) contractsorm.Query {
+							return query.Where("name = ?", "load_missing_book0")
+						}).Find(&user1, user.ID))
 						s.True(user1.ID > 0)
 						s.Nil(user1.Address)
 						s.True(len(user1.Books) == 1)
@@ -4630,7 +4634,9 @@ func (s *QueryTestSuite) TestWith() {
 					description: "with simple conditions",
 					setup: func(description string) {
 						var user1 User
-						s.Nil(query.Query().With("Books", "name = ?", "with_book0").Find(&user1, user.ID))
+						s.Nil(query.Query().With("Books", func(query contractsorm.Query) contractsorm.Query {
+							return query.Where("name = ?", "with_book0")
+						}).Find(&user1, user.ID))
 						s.True(user1.ID > 0)
 						s.Nil(user1.Address)
 						s.Equal(1, len(user1.Books))

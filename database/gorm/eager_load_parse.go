@@ -16,7 +16,7 @@ type eagerLoadEntry struct {
 	callback contractsorm.RelationCallback // nil for the synthetic noop entries that _addNestedWiths inserts
 }
 
-// parseEagerLoad normalises the variadic args accepted by Query.WithRelation into an ordered
+// parseEagerLoad normalises the variadic args accepted by Query.With into an ordered
 // slice of eagerLoadEntry. Mirrors the union of fedaco's _parseWithRelations,
 // _addNestedWiths and _createSelectWithConstraint, expressed as Go runtime type-dispatch since Go
 // doesn't have TypeScript-style overloads.
@@ -31,7 +31,7 @@ type eagerLoadEntry struct {
 //   - []string{"Books", "Roles"}
 //   - []any{"Books", map[string]contractsorm.RelationCallback{"Roles": cb}}
 func parseEagerLoad(args []any) ([]eagerLoadEntry, error) {
-	// Special-case the (string, callback) two-arg form so q.WithRelation("Books", cb) binds the
+	// Special-case the (string, callback) two-arg form so q.With("Books", cb) binds the
 	// callback to the string rather than treating cb as a freestanding entry.
 	if len(args) == 2 {
 		if name, ok := args[0].(string); ok {

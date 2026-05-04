@@ -21,7 +21,6 @@ type Conditions struct {
 	selectRaw           *Select
 	selectSubs          []selectSub
 	where               []contractsdriver.Where
-	with                []With
 	eagerLoad           []eagerLoadEntry
 	relations           []relationExistence
 	distinct            bool
@@ -40,11 +39,6 @@ type Select struct {
 type Table struct {
 	name string
 	args []any
-}
-
-type With struct {
-	query string
-	args  []any
 }
 
 // selectSub describes a deferred sub-select aggregate (WithCount / WithMax / etc.).

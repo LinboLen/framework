@@ -10,32 +10,32 @@ import (
 	"github.com/goravel/framework/database/orm"
 )
 
-// WithRelationTestSuite covers the WithRelation / WithoutRelation / WithRelationOnly methods,
-// which run Goravel's own eager loader (not GORM Preload). Each kind of relationship is exercised
-// against every available driver.
-type WithRelationTestSuite struct {
+// WithTestSuite covers the With / Without / WithOnly methods, which run Goravel's own eager
+// loader (not GORM Preload). Each kind of relationship is exercised against every available
+// driver.
+type WithTestSuite struct {
 	suite.Suite
 	queries map[string]*TestQuery
 }
 
-func TestWithRelationTestSuite(t *testing.T) {
+func TestWithSuite(t *testing.T) {
 	t.Parallel()
-	suite.Run(t, &WithRelationTestSuite{
+	suite.Run(t, &WithTestSuite{
 		queries: make(map[string]*TestQuery),
 	})
 }
 
-func (s *WithRelationTestSuite) SetupSuite() {
+func (s *WithTestSuite) SetupSuite() {
 	s.queries = NewTestQueryBuilder().All("", false)
 }
 
-func (s *WithRelationTestSuite) SetupTest() {
+func (s *WithTestSuite) SetupTest() {
 	for _, query := range s.queries {
 		query.CreateTable()
 	}
 }
 
-func (s *WithRelationTestSuite) sqlite() *TestQuery {
+func (s *WithTestSuite) sqlite() *TestQuery {
 	if q, ok := s.queries["SQLite"]; ok {
 		return q
 	}
@@ -47,7 +47,7 @@ func (s *WithRelationTestSuite) sqlite() *TestQuery {
 // Per-kind integration tests
 // ---------------------------------------------------------------------------
 
-func (s *WithRelationTestSuite) TestWithRelation_HasMany() {
+func (s *WithTestSuite) TestWith_HasMany() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			alice := &User{Name: "wr_hm_alice", Books: []*Book{{Name: "wr_hm_a1"}, {Name: "wr_hm_a2"}}}
@@ -57,7 +57,7 @@ func (s *WithRelationTestSuite) TestWithRelation_HasMany() {
 
 			var users []User
 			s.Nil(query.Query().Where("name like ?", "wr_hm_%").OrderBy("name").
-				WithRelation("Books").Get(&users))
+				With("Books").Get(&users))
 			s.Len(users, 2)
 			s.Equal("wr_hm_alice", users[0].Name)
 			s.Len(users[0].Books, 2)
@@ -67,7 +67,7 @@ func (s *WithRelationTestSuite) TestWithRelation_HasMany() {
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_HasOne() {
+func (s *WithTestSuite) TestWith_HasOne() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_ho_user", Address: &Address{Name: "wr_ho_addr", Province: "X"}}
@@ -75,14 +75,14 @@ func (s *WithRelationTestSuite) TestWithRelation_HasOne() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_ho_user").
-				WithRelation("Address").First(&loaded))
+				With("Address").First(&loaded))
 			s.NotNil(loaded.Address)
 			s.Equal("wr_ho_addr", loaded.Address.Name)
 		})
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_BelongsTo() {
+func (s *WithTestSuite) TestWith_BelongsTo() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_bt_user", Address: &Address{Name: "wr_bt_addr"}}
@@ -90,7 +90,7 @@ func (s *WithRelationTestSuite) TestWithRelation_BelongsTo() {
 
 			var addrs []Address
 			s.Nil(query.Query().Where("name = ?", "wr_bt_addr").
-				WithRelation("User").Get(&addrs))
+				With("User").Get(&addrs))
 			s.Len(addrs, 1)
 			s.NotNil(addrs[0].User)
 			s.Equal("wr_bt_user", addrs[0].User.Name)
@@ -98,7 +98,7 @@ func (s *WithRelationTestSuite) TestWithRelation_BelongsTo() {
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_Many2Many() {
+func (s *WithTestSuite) TestWith_Many2Many() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			role := &Role{Name: "wr_m2m_role"}
@@ -108,14 +108,14 @@ func (s *WithRelationTestSuite) TestWithRelation_Many2Many() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_m2m_user").
-				WithRelation("Roles").First(&loaded))
+				With("Roles").First(&loaded))
 			s.Len(loaded.Roles, 1)
 			s.Equal("wr_m2m_role", loaded.Roles[0].Name)
 		})
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_MorphOne() {
+func (s *WithTestSuite) TestWith_MorphOne() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_mo_user", House: &House{Name: "wr_mo_house"}}
@@ -123,14 +123,14 @@ func (s *WithRelationTestSuite) TestWithRelation_MorphOne() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_mo_user").
-				WithRelation("House").First(&loaded))
+				With("House").First(&loaded))
 			s.NotNil(loaded.House)
 			s.Equal("wr_mo_house", loaded.House.Name)
 		})
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_MorphMany() {
+func (s *WithTestSuite) TestWith_MorphMany() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_mm_user", Phones: []*Phone{{Name: "wr_mm_p1"}, {Name: "wr_mm_p2"}}}
@@ -138,13 +138,13 @@ func (s *WithRelationTestSuite) TestWithRelation_MorphMany() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_mm_user").
-				WithRelation("Phones").First(&loaded))
+				With("Phones").First(&loaded))
 			s.Len(loaded.Phones, 2)
 		})
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_HasManyThrough() {
+func (s *WithTestSuite) TestWith_HasManyThrough() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			// User -> Books -> Authors (declared via userWithThrough.ThroughRelations()).
@@ -158,7 +158,7 @@ func (s *WithRelationTestSuite) TestWithRelation_HasManyThrough() {
 			var users []userAuthorsThrough
 			s.Nil(query.Query().Model(&userAuthorsThrough{}).
 				Where("name like ?", "wr_th_%").OrderBy("name").
-				WithRelation("Authors").Get(&users))
+				With("Authors").Get(&users))
 			s.Len(users, 2)
 			s.Len(users[0].Authors, 1)
 			s.Equal("wr_th_a1", users[0].Authors[0].Name)
@@ -167,7 +167,7 @@ func (s *WithRelationTestSuite) TestWithRelation_HasManyThrough() {
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_Nested() {
+func (s *WithTestSuite) TestWith_Nested() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_n_user", Books: []*Book{{Name: "wr_n_b1", Author: &Author{Name: "wr_n_a1"}}}}
@@ -175,7 +175,7 @@ func (s *WithRelationTestSuite) TestWithRelation_Nested() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_n_user").
-				WithRelation("Books.Author").First(&loaded))
+				With("Books.Author").First(&loaded))
 			s.Len(loaded.Books, 1)
 			s.NotNil(loaded.Books[0].Author)
 			s.Equal("wr_n_a1", loaded.Books[0].Author.Name)
@@ -183,7 +183,7 @@ func (s *WithRelationTestSuite) TestWithRelation_Nested() {
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_Callback() {
+func (s *WithTestSuite) TestWith_Callback() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_cb_user", Books: []*Book{{Name: "wr_cb_keep"}, {Name: "wr_cb_drop"}}}
@@ -194,14 +194,14 @@ func (s *WithRelationTestSuite) TestWithRelation_Callback() {
 				return q.Where("name = ?", "wr_cb_keep")
 			}
 			s.Nil(query.Query().Where("name = ?", "wr_cb_user").
-				WithRelation("Books", cb).First(&loaded))
+				With("Books", cb).First(&loaded))
 			s.Len(loaded.Books, 1)
 			s.Equal("wr_cb_keep", loaded.Books[0].Name)
 		})
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_Map() {
+func (s *WithTestSuite) TestWith_Map() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			role := &Role{Name: "wr_map_role"}
@@ -211,7 +211,7 @@ func (s *WithRelationTestSuite) TestWithRelation_Map() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_map_user").
-				WithRelation(map[string]contractsorm.RelationCallback{
+				With(map[string]contractsorm.RelationCallback{
 					"Books": nil,
 					"Roles": nil,
 				}).First(&loaded))
@@ -221,7 +221,7 @@ func (s *WithRelationTestSuite) TestWithRelation_Map() {
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelation_Columns() {
+func (s *WithTestSuite) TestWith_Columns() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wr_col_user", Books: []*Book{{Name: "wr_col_b1"}}}
@@ -229,7 +229,7 @@ func (s *WithRelationTestSuite) TestWithRelation_Columns() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wr_col_user").
-				WithRelation("Books:id,name").First(&loaded))
+				With("Books:id,name").First(&loaded))
 			s.Len(loaded.Books, 1)
 			s.Equal("wr_col_b1", loaded.Books[0].Name)
 			// The loader auto-adds the FK column (user_id) so dictionary grouping by FK works,
@@ -240,7 +240,7 @@ func (s *WithRelationTestSuite) TestWithRelation_Columns() {
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithoutRelation() {
+func (s *WithTestSuite) TestWithout() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wrr_user", Books: []*Book{{Name: "wrr_b"}}, Address: &Address{Name: "wrr_a"}}
@@ -248,16 +248,16 @@ func (s *WithRelationTestSuite) TestWithoutRelation() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wrr_user").
-				WithRelation("Books", "Address").
-				WithoutRelation("Books").
+				With("Books", "Address").
+				Without("Books").
 				First(&loaded))
-			s.Len(loaded.Books, 0, "Books should not be loaded after WithoutRelation")
+			s.Len(loaded.Books, 0, "Books should not be loaded after Without")
 			s.NotNil(loaded.Address)
 		})
 	}
 }
 
-func (s *WithRelationTestSuite) TestWithRelationOnly() {
+func (s *WithTestSuite) TestWithOnly() {
 	for driver, query := range s.queries {
 		s.Run(driver, func() {
 			u := &User{Name: "wro_user", Books: []*Book{{Name: "wro_b"}}, Address: &Address{Name: "wro_a"}}
@@ -265,19 +265,19 @@ func (s *WithRelationTestSuite) TestWithRelationOnly() {
 
 			var loaded User
 			s.Nil(query.Query().Where("name = ?", "wro_user").
-				WithRelation("Books", "Address").
-				WithRelationOnly("Books").
+				With("Books", "Address").
+				WithOnly("Books").
 				First(&loaded))
 			s.Len(loaded.Books, 1)
-			s.Nil(loaded.Address, "Address should not be loaded after WithRelationOnly")
+			s.Nil(loaded.Address, "Address should not be loaded after WithOnly")
 		})
 	}
 }
 
-// TestWithRelation_ChunkedIN verifies that the loader splits IN clauses into batches when the
+// TestWith_ChunkedIN verifies that the loader splits IN clauses into batches when the
 // parent count exceeds the chunk size, working around hard limits like Oracle 1000 / SQLite 999.
 // We use sqlite (which has the strictest default of 999) and seed > 999 parents to confirm.
-func (s *WithRelationTestSuite) TestWithRelation_ChunkedIN() {
+func (s *WithTestSuite) TestWith_ChunkedIN() {
 	q := s.sqlite()
 	if q == nil {
 		return
@@ -291,7 +291,7 @@ func (s *WithRelationTestSuite) TestWithRelation_ChunkedIN() {
 
 	var users []User
 	s.Nil(q.Query().Where("name like ?", "wr_chunk_%").
-		WithRelation("Books").Get(&users))
+		With("Books").Get(&users))
 	s.Len(users, total, "all parents should be returned")
 
 	loaded := 0
@@ -305,15 +305,15 @@ func (s *WithRelationTestSuite) TestWithRelation_ChunkedIN() {
 // SQL-shape assertions (sqlite + ToRawSql)
 // ---------------------------------------------------------------------------
 
-func (s *WithRelationTestSuite) TestSQL_WithRelation_HasMany_DoesNotJoinPreload() {
+func (s *WithTestSuite) TestSQL_With_HasMany_DoesNotJoinPreload() {
 	q := s.sqlite()
 	if q == nil {
 		return
 	}
-	// WithRelation defers loading until after the main query runs, so the *outer* SQL must look
+	// With defers loading until after the main query runs, so the *outer* SQL must look
 	// identical to a plain Get — no joins, no GORM preload markers.
 	var users []User
-	sql := q.Query().Model(&User{}).WithRelation("Books").ToRawSql().Get(&users)
+	sql := q.Query().Model(&User{}).With("Books").ToRawSql().Get(&users)
 	s.Equal(
 		"SELECT * FROM `users` WHERE `users`.`deleted_at` IS NULL",
 		sql,

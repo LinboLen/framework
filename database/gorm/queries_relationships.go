@@ -230,15 +230,15 @@ func (r *Query) WithExists(relations ...string) contractsorm.Query {
 }
 
 // ---------------------------------------------------------------------------
-// Public API: eager loading (WithRelation / WithoutRelation / WithRelationOnly)
+// Public API: eager loading (With / Without / WithOnly)
 //
 // These methods build up conditions.eagerLoad. The actual loader runs after the main query
 // returns; see eager_loader.go for the execution side.
 // ---------------------------------------------------------------------------
 
-// WithRelation eagerly loads the given relationships using Goravel's own loader. Accepts the
+// With eagerly loads the given relationships using Goravel's own loader. Accepts the
 // union of fedaco's with(...) shapes; see the orm.Query interface comment for the full grammar.
-func (r *Query) WithRelation(args ...any) contractsorm.Query {
+func (r *Query) With(args ...any) contractsorm.Query {
 	entries, err := parseEagerLoad(args)
 	if err != nil {
 		query := r.new(r.instance.Session(&gormio.Session{}))
@@ -252,9 +252,9 @@ func (r *Query) WithRelation(args ...any) contractsorm.Query {
 	return r.setConditions(conditions)
 }
 
-// WithoutRelation removes the named relations from the eager-load list. Mirrors fedaco's
+// Without removes the named relations from the eager-load list. Mirrors fedaco's
 // without(). Names must match exactly (including dot-paths, e.g. "Books.Author").
-func (r *Query) WithoutRelation(relations ...string) contractsorm.Query {
+func (r *Query) Without(relations ...string) contractsorm.Query {
 	if len(relations) == 0 || len(r.conditions.eagerLoad) == 0 {
 		return r
 	}
@@ -274,12 +274,12 @@ func (r *Query) WithoutRelation(relations ...string) contractsorm.Query {
 	return r.setConditions(conditions)
 }
 
-// WithRelationOnly clears the eager-load list, then adds the given relations. Mirrors fedaco's
+// WithOnly clears the eager-load list, then adds the given relations. Mirrors fedaco's
 // withOnly(). Useful when a default-scoped query has eager loads you want to override.
-func (r *Query) WithRelationOnly(args ...any) contractsorm.Query {
+func (r *Query) WithOnly(args ...any) contractsorm.Query {
 	conditions := r.conditions
 	conditions.eagerLoad = nil
-	return r.setConditions(conditions).WithRelation(args...)
+	return r.setConditions(conditions).With(args...)
 }
 
 // ---------------------------------------------------------------------------

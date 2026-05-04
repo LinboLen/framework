@@ -12,7 +12,7 @@ import (
 )
 
 // newRelQuery builds a Query backed by a stub gorm.DB. The DB is non-functional but is enough for
-// the queueing methods (Has / WhereHas / WithCount / WithRelation / ...) which only mutate the
+// the queueing methods (Has / WhereHas / WithCount / With / ...) which only mutate the
 // Conditions value and never execute SQL.
 func newRelQuery(t *testing.T) *Query {
 	t.Helper()
@@ -219,46 +219,46 @@ func TestWithExists(t *testing.T) {
 
 // --- Eager-load queueing ---------------------------------------------------
 
-func TestWithRelationQueueing(t *testing.T) {
+func TestWithQueueing(t *testing.T) {
 	q := newRelQuery(t)
-	got := toQuery(q.WithRelation("Books", "Roles"))
+	got := toQuery(q.With("Books", "Roles"))
 	assert.Len(t, got.conditions.eagerLoad, 2)
 	assert.Equal(t, "Books", got.conditions.eagerLoad[0].relation)
 	assert.Equal(t, "Roles", got.conditions.eagerLoad[1].relation)
 }
 
-func TestWithRelationInvalidArg(t *testing.T) {
+func TestWithInvalidArg(t *testing.T) {
 	q := newRelQuery(t)
-	got := toQuery(q.WithRelation(3.14))
+	got := toQuery(q.With(3.14))
 	assert.True(t, errors.Is(got.instance.Error, errors.OrmEagerLoadInvalidArgument))
 }
 
-func TestWithoutRelation(t *testing.T) {
+func TestWithout(t *testing.T) {
 	q := newRelQuery(t)
-	q1 := toQuery(q.WithRelation("Books", "Roles", "Logo"))
-	q2 := toQuery(q1.WithoutRelation("Roles"))
+	q1 := toQuery(q.With("Books", "Roles", "Logo"))
+	q2 := toQuery(q1.Without("Roles"))
 	assert.Len(t, q2.conditions.eagerLoad, 2)
 	for _, e := range q2.conditions.eagerLoad {
 		assert.NotEqual(t, "Roles", e.relation)
 	}
 }
 
-func TestWithoutRelationNoOps(t *testing.T) {
+func TestWithoutNoOps(t *testing.T) {
 	q := newRelQuery(t)
 	// no eager loads queued -> returns same query
-	q1 := q.WithoutRelation("Books")
+	q1 := q.Without("Books")
 	assert.Same(t, q, q1.(*Query))
 
 	// no relation names -> returns same query
-	q2 := toQuery(q.WithRelation("Books"))
-	q3 := q2.WithoutRelation()
+	q2 := toQuery(q.With("Books"))
+	q3 := q2.Without()
 	assert.Same(t, q2, q3.(*Query))
 }
 
-func TestWithRelationOnly(t *testing.T) {
+func TestWithOnly(t *testing.T) {
 	q := newRelQuery(t)
-	q1 := toQuery(q.WithRelation("Books", "Roles"))
-	q2 := toQuery(q1.WithRelationOnly("Logo"))
+	q1 := toQuery(q.With("Books", "Roles"))
+	q2 := toQuery(q1.WithOnly("Logo"))
 	assert.Len(t, q2.conditions.eagerLoad, 1)
 	assert.Equal(t, "Logo", q2.conditions.eagerLoad[0].relation)
 }

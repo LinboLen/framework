@@ -156,9 +156,7 @@ func (r *Query) Create(value any) error {
 }
 
 func (r *Query) Cursor() chan contractsdb.Row {
-	with := r.conditions.with
 	query := r.addGlobalScopes().buildConditions()
-	r.conditions.with = with
 
 	cursorChan := make(chan contractsdb.Row)
 	go func() {
@@ -479,7 +477,7 @@ func (r *Query) Load(model any, relation string, args ...any) error {
 	}
 
 	copyDest := copyStruct(model)
-	err := r.With(relation, args...).Find(model)
+	err := r.With(append([]any{relation}, args...)...).Find(model)
 
 	relationRoot := relation
 	if dotIndex := strings.Index(relation, "."); dotIndex > 0 {
@@ -1152,16 +1150,6 @@ func (r *Query) WhereNull(column string) contractsorm.Query {
 	return r.Where(fmt.Sprintf("%s IS NULL", column))
 }
 
-func (r *Query) With(query string, args ...any) contractsorm.Query {
-	conditions := r.conditions
-	conditions.with = deep.Append(r.conditions.with, With{
-		query: query,
-		args:  args,
-	})
-
-	return r.setConditions(conditions)
-}
-
 func (r *Query) WithoutEvents() contractsorm.Query {
 	conditions := r.conditions
 	conditions.withoutEvents = true
@@ -1263,7 +1251,6 @@ func (r *Query) buildConditions() *Query {
 	db = query.buildSelectSubAggregates(db)
 	db = query.buildSharedLock(db)
 	db = query.buildTable(db)
-	db = query.buildWith(db)
 	db = query.buildWithTrashed(db)
 	db = query.buildWhere(db)
 	db = query.buildRelations(db)
@@ -1537,41 +1524,6 @@ func (r *Query) buildWherePlaceholder(query string, args ...any) string {
 	}
 
 	return query
-}
-
-func (r *Query) buildWith(db *gormio.DB) *gormio.DB {
-	if len(r.conditions.with) == 0 {
-		return db
-	}
-
-	for _, item := range r.conditions.with {
-		isSet := false
-		if len(item.args) == 1 {
-			if arg, ok := item.args[0].(func(contractsorm.Query) contractsorm.Query); ok {
-				newArgs := []any{
-					func(tx *gormio.DB) *gormio.DB {
-						queryImpl := NewQuery(r.ctx, r.config, r.dbConfig, tx, r.grammar, r.log, r.modelToObserver, nil)
-						query := arg(queryImpl)
-						queryImpl = query.(*Query)
-						queryImpl = queryImpl.buildConditions()
-
-						return queryImpl.instance
-					},
-				}
-
-				db = db.Preload(item.query, newArgs...)
-				isSet = true
-			}
-		}
-
-		if !isSet {
-			db = db.Preload(item.query, item.args...)
-		}
-	}
-
-	r.conditions.with = nil
-
-	return db
 }
 
 func (r *Query) buildWithTrashed(db *gormio.DB) *gormio.DB {
