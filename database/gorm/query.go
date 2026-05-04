@@ -1260,11 +1260,13 @@ func (r *Query) buildConditions() *Query {
 	db = query.buildOmit(db)
 	db = query.buildScopes(db)
 	db = query.buildSelectColumns(db)
+	db = query.buildSelectSubAggregates(db)
 	db = query.buildSharedLock(db)
 	db = query.buildTable(db)
 	db = query.buildWith(db)
 	db = query.buildWithTrashed(db)
 	db = query.buildWhere(db)
+	db = query.buildRelations(db)
 
 	return query.new(db)
 }

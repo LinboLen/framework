@@ -36,6 +36,10 @@ type Orm interface {
 }
 
 type Query interface {
+	// QueryWithRelations exposes the QueriesRelationships surface (Has / WhereHas / WithCount /
+	// HasMorph / etc.). Embedding it into Query lets users chain relationship queries with the
+	// rest of the builder: q.Where(...).Has("Books", ">=", 3).Get(&users).
+	QueryWithRelations
 	// Association gets an association instance by name.
 	Association(association string) Association
 	// Begin begins a new transaction

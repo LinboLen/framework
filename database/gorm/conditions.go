@@ -19,8 +19,10 @@ type Conditions struct {
 	scopes              []func(contractsorm.Query) contractsorm.Query
 	selectColumns       []string
 	selectRaw           *Select
+	selectSubs          []selectSub
 	where               []contractsdriver.Where
 	with                []With
+	relations           []relationExistence
 	distinct            bool
 	lockForUpdate       bool
 	sharedLock          bool
@@ -42,4 +44,29 @@ type Table struct {
 type With struct {
 	query string
 	args  []any
+}
+
+// selectSub describes a deferred sub-select aggregate (WithCount / WithMax / etc.).
+// The relation is resolved at buildConditions() time, when the parent model is known.
+type selectSub struct {
+	relation string
+	column   string
+	function string // count | max | min | sum | avg | exists
+	alias    string
+	callback contractsorm.RelationCallback
+}
+
+// relationExistence describes a deferred relationship existence/absence condition.
+// Building is deferred so the parent model can be resolved from conditions.model or conditions.dest
+// (the latter is set by Find/First/Get when the user passes a dest).
+type relationExistence struct {
+	relation    string
+	operator    string
+	count       int
+	conjunction string // "and" | "or"
+	callback    contractsorm.RelationCallback
+
+	// morph specifics (zero-valued for non-morph queries)
+	morphTypes    []any
+	morphCallback contractsorm.MorphRelationCallback
 }

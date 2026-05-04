@@ -174,6 +174,12 @@ var (
 	OrmDeletedAtColumnNotFound     = New("deleted at column not found")
 	OrmJsonContainsInvalidBinding  = New("invalid value for JSON contains: %v")
 	OrmJsonColumnUpdateInvalid     = New("invalid value for JSON column update: %v")
+	OrmRelationNotFound            = New("relation %q not found on model %s")
+	OrmRelationUnsupported         = New("relation %q on model %s has unsupported kind %q")
+	OrmRelationInvalidArgument     = New("invalid argument %T for relation query, expected callback, operator or count")
+	OrmRelationInvalidAggregate    = New("invalid aggregate function %q, expected one of count, max, min, sum, avg, exists")
+	OrmRelationMorphTypesEmpty     = New("hasMorph requires at least one morph type")
+	OrmRelationThroughNotConfigured = New("through relation %q must be declared via the ThroughRelations() method on model %s")
 
 	PackageConfigKeyExists       = New("config key '%s' already exists,using ReplaceConfig instead if you want to update it")
 	PackageFacadeNotFound        = New("facade %s not found")
