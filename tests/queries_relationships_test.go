@@ -419,3 +419,125 @@ func (s *QueriesRelationshipsTestSuite) TestSQL_WithCountWithAlias() {
 func sqliteDriverName() string {
 	return "SQLite"
 }
+
+// ---------------------------------------------------------------------------
+// Aggregate retrieval: WithCount / WithMax / WithMin / WithSum / WithAvg / WithExists
+//
+// WithAggregate emits a sub-select column with a deterministic alias (see aggregateAlias in
+// database/gorm/queries_relationships.go). To read the value back, declare a struct field tagged
+// with that alias as its `gorm:"column:..."`. We use a DTO struct here rather than amending User,
+// to keep the demonstration self-contained and avoid affecting other suites.
+// ---------------------------------------------------------------------------
+
+// userAggregates is a DTO that maps to the same `users` table but exposes the aggregate alias
+// columns. It is populated via Model(&User{}).Get(&[]userAggregates{}) — Model controls the FROM
+// table and relation resolution; the DTO controls how rows are scanned.
+type userAggregates struct {
+	ID               uint     `gorm:"column:id"`
+	Name             string   `gorm:"column:name"`
+	BooksCount       int64    `gorm:"column:books_count"`
+	BooksAuthorCount int64    `gorm:"column:books_author_count"`
+	PopularBooks     int64    `gorm:"column:popular_books"`
+	BooksMaxID       *int64   `gorm:"column:books_max_id"`
+	BooksMinID       *int64   `gorm:"column:books_min_id"`
+	BooksSumID       *int64   `gorm:"column:books_sum_id"`
+	BooksAvgID       *float64 `gorm:"column:books_avg_id"`
+	BooksExists      int64    `gorm:"column:books_exists"`
+}
+
+func (s *QueriesRelationshipsTestSuite) TestWithCount_Retrieve() {
+	for driver, query := range s.queries {
+		s.Run(driver, func() {
+			// u1: 2 books, u2: 0 books, u3: 1 book with an author.
+			u1 := &User{Name: "agg_count_u1", Books: []*Book{{Name: "ab1"}, {Name: "ab2"}}}
+			s.Nil(query.Query().Select(orm.Associations).Create(&u1))
+			u2 := &User{Name: "agg_count_u2"}
+			s.Nil(query.Query().Create(&u2))
+			u3 := &User{Name: "agg_count_u3", Books: []*Book{{Name: "ab3", Author: &Author{Name: "Author1"}}}}
+			s.Nil(query.Query().Select(orm.Associations).Create(&u3))
+
+			var rows []userAggregates
+			s.Nil(query.Query().Model(&User{}).Where("name like ?", "agg_count_%").OrderBy("name").
+				WithCount("Books").
+				WithCount("Books.Author").
+				Get(&rows))
+
+			s.Len(rows, 3)
+			s.Equal(int64(2), rows[0].BooksCount, "u1 has 2 books")
+			s.Equal(int64(0), rows[1].BooksCount, "u2 has 0 books")
+			s.Equal(int64(1), rows[2].BooksCount, "u3 has 1 book")
+			s.Equal(int64(0), rows[0].BooksAuthorCount, "u1's books have no authors")
+			s.Equal(int64(1), rows[2].BooksAuthorCount, "u3's book has an author (nested count)")
+		})
+	}
+}
+
+func (s *QueriesRelationshipsTestSuite) TestWithCount_CustomAliasAndCallback() {
+	for driver, query := range s.queries {
+		s.Run(driver, func() {
+			// Three books — only two start with "pop_". Custom alias + callback narrows the count.
+			u := &User{Name: "agg_alias_u", Books: []*Book{{Name: "pop_x"}, {Name: "pop_y"}, {Name: "boring"}}}
+			s.Nil(query.Query().Select(orm.Associations).Create(&u))
+
+			cb := func(q contractsorm.Query) contractsorm.Query {
+				return q.Where("name like ?", "pop_%")
+			}
+			var rows []userAggregates
+			s.Nil(query.Query().Model(&User{}).Where("name = ?", "agg_alias_u").
+				WithCount(contractsorm.RelationCount{Name: "Books", Alias: "popular_books", Callback: cb}).
+				Get(&rows))
+
+			s.Len(rows, 1)
+			s.Equal(int64(2), rows[0].PopularBooks, "callback filters to 2 books named pop_*")
+		})
+	}
+}
+
+func (s *QueriesRelationshipsTestSuite) TestWithMaxMinSumAvg_Retrieve() {
+	for driver, query := range s.queries {
+		s.Run(driver, func() {
+			// Three books with consecutive auto-increment IDs (1, 2, 3) on a fresh table.
+			u := &User{Name: "agg_num_u", Books: []*Book{{Name: "n1"}, {Name: "n2"}, {Name: "n3"}}}
+			s.Nil(query.Query().Select(orm.Associations).Create(&u))
+
+			var rows []userAggregates
+			s.Nil(query.Query().Model(&User{}).Where("name = ?", "agg_num_u").
+				WithMax("Books", "id").
+				WithMin("Books", "id").
+				WithSum("Books", "id").
+				WithAvg("Books", "id").
+				Get(&rows))
+
+			s.Len(rows, 1)
+			s.NotNil(rows[0].BooksMaxID)
+			s.NotNil(rows[0].BooksMinID)
+			s.NotNil(rows[0].BooksSumID)
+			s.NotNil(rows[0].BooksAvgID)
+			minID := *rows[0].BooksMinID
+			maxID := *rows[0].BooksMaxID
+			s.Equal(int64(2), maxID-minID, "3 consecutive IDs => max-min = 2")
+			s.Equal(minID+(minID+1)+(minID+2), *rows[0].BooksSumID)
+			s.InDelta(float64(minID)+1.0, *rows[0].BooksAvgID, 0.001)
+		})
+	}
+}
+
+func (s *QueriesRelationshipsTestSuite) TestWithExists_Retrieve() {
+	for driver, query := range s.queries {
+		s.Run(driver, func() {
+			withBooks := &User{Name: "agg_exist_yes", Books: []*Book{{Name: "ex1"}}}
+			s.Nil(query.Query().Select(orm.Associations).Create(&withBooks))
+			withoutBooks := &User{Name: "agg_exist_no"}
+			s.Nil(query.Query().Create(&withoutBooks))
+
+			var rows []userAggregates
+			s.Nil(query.Query().Model(&User{}).Where("name like ?", "agg_exist_%").OrderBy("name").
+				WithExists("Books").
+				Get(&rows))
+
+			s.Len(rows, 2)
+			s.Equal(int64(0), rows[0].BooksExists, "agg_exist_no has no books")
+			s.Equal(int64(1), rows[1].BooksExists, "agg_exist_yes has books")
+		})
+	}
+}

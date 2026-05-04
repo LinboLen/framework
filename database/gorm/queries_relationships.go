@@ -404,7 +404,11 @@ func (r *Query) buildSelectSubAggregates(db *gormio.DB) *gormio.DB {
 			alias = aggregateAlias(sub.relation, sub.function, sub.column)
 		}
 		if sub.function == "exists" {
-			subExprs = append(subExprs, fmt.Sprintf("EXISTS (?) AS %s", quoteIdent(alias)))
+			// Use CASE WHEN EXISTS instead of bare `EXISTS (...) AS col`: PostgreSQL returns
+			// EXISTS as a native bool which won't scan into integer struct fields, and SQL Server
+			// rejects EXISTS as a column expression entirely. CASE WHEN yields a portable 0/1 int
+			// across SQLite / MySQL / PostgreSQL / SQL Server.
+			subExprs = append(subExprs, fmt.Sprintf("CASE WHEN EXISTS (?) THEN 1 ELSE 0 END AS %s", quoteIdent(alias)))
 		} else {
 			subExprs = append(subExprs, fmt.Sprintf("(?) AS %s", quoteIdent(alias)))
 		}
@@ -776,11 +780,14 @@ func aggregateAlias(relation, fn, column string) string {
 }
 
 // camelToSnake is a minimal helper sufficient for relation alias generation. We avoid pulling
-// in a heavier dependency for this single use case.
+// in a heavier dependency for this single use case. It is also defensive about pre-existing
+// underscores: callers feed it strings that may already contain "_" (e.g. when "Books.Author"
+// is dotted-replaced to "Books_Author"), and we must not produce double underscores like
+// "books__author".
 func camelToSnake(s string) string {
 	var sb strings.Builder
 	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
+		if i > 0 && r >= 'A' && r <= 'Z' && s[i-1] != '_' {
 			sb.WriteByte('_')
 		}
 		if r >= 'A' && r <= 'Z' {
