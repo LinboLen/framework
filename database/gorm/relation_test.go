@@ -51,8 +51,15 @@ type relUser struct {
 	Books   []*relBook  `gorm:"foreignKey:UserID"`
 	Profile *relProfile `gorm:"foreignKey:UserID"`
 	Roles   []*relRole  `gorm:"many2many:rel_user_roles"`
-	Houses  []*relHouse `gorm:"polymorphic:Houseable"`
-	Logo    *relLogo    `gorm:"polymorphic:Logoable"`
+	Houses  []*relHouse `gorm:"-"`
+	Logo    *relLogo    `gorm:"-"`
+}
+
+func (relUser) MorphRelations() map[string]contractsorm.MorphRelation {
+	return map[string]contractsorm.MorphRelation{
+		"Houses": {Kind: contractsorm.MorphMany, Related: &relHouse{}, Name: "houseable"},
+		"Logo":   {Kind: contractsorm.MorphOne, Related: &relLogo{}, Name: "logoable"},
+	}
 }
 
 type relBook struct {
@@ -75,10 +82,10 @@ type relRole struct {
 }
 
 type relHouse struct {
-	ID             uint
-	Address        string
-	HouseableID    uint
-	HouseableType  string
+	ID            uint
+	Address       string
+	HouseableID   uint
+	HouseableType string
 }
 
 type relLogo struct {
@@ -309,4 +316,128 @@ func TestResolveRelation_RelatedModelType(t *testing.T) {
 	rt := reflect.TypeOf(desc.relatedModel)
 	assert.Equal(t, reflect.Pointer, rt.Kind())
 	assert.Equal(t, "relBook", rt.Elem().Name())
+}
+
+// --- Morph relation fixtures ---
+
+type morphImage struct {
+	ID            uint
+	URL           string
+	ImageableID   uint
+	ImageableType string
+	Imageable     any `gorm:"-"`
+}
+
+func (morphImage) MorphRelations() map[string]contractsorm.MorphRelation {
+	return map[string]contractsorm.MorphRelation{
+		"Imageable": {Kind: contractsorm.MorphTo, Name: "imageable"},
+	}
+}
+
+type morphPost struct {
+	ID    uint
+	Title string
+	Tags  []*morphTag `gorm:"-"`
+}
+
+func (morphPost) MorphRelations() map[string]contractsorm.MorphRelation {
+	return map[string]contractsorm.MorphRelation{
+		"Tags": {Kind: contractsorm.MorphToMany, Related: &morphTag{}, Name: "taggable"},
+	}
+}
+
+type morphTag struct {
+	ID    uint
+	Name  string
+	Posts []*morphPost `gorm:"-"`
+}
+
+func (morphTag) MorphRelations() map[string]contractsorm.MorphRelation {
+	return map[string]contractsorm.MorphRelation{
+		"Posts": {Kind: contractsorm.MorphedByMany, Related: &morphPost{}, Name: "taggable"},
+	}
+}
+
+type morphBadKind struct{}
+
+func (morphBadKind) MorphRelations() map[string]contractsorm.MorphRelation {
+	return map[string]contractsorm.MorphRelation{
+		"X": {Kind: "unknown"},
+	}
+}
+
+type morphMissingRelated struct{}
+
+func (morphMissingRelated) MorphRelations() map[string]contractsorm.MorphRelation {
+	return map[string]contractsorm.MorphRelation{
+		"X": {Kind: contractsorm.MorphMany, Name: "imageable"},
+	}
+}
+
+// --- Morph relation resolution tests ---
+
+func TestResolveRelation_MorphTo(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &morphImage{}, "Imageable")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindMorphTo, desc.kind)
+	assert.Equal(t, "imageable_type", desc.morphTypeColumn)
+	assert.Equal(t, "imageable_id", desc.morphIDColumn)
+	assert.Equal(t, "id", desc.morphOwnerKey)
+	// MorphTo has no single related model; it's resolved per-row.
+	assert.Nil(t, desc.relatedModel)
+}
+
+func TestResolveRelation_MorphToMany(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &morphPost{}, "Tags")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindMorphToMany, desc.kind)
+	assert.Equal(t, "taggables", desc.pivotTable)
+	assert.Equal(t, "taggable_type", desc.morphTypeColumn)
+	assert.Equal(t, "taggable_id", desc.morphIDColumn)
+	assert.False(t, desc.morphInverse)
+	// morphValue defaults to the parent's table name when no MorphClass / morph map override.
+	assert.Equal(t, "morph_posts", desc.morphValue)
+}
+
+func TestResolveRelation_MorphedByMany(t *testing.T) {
+	db := newStubGormDB(t)
+	desc, err := resolveRelation(db, &morphTag{}, "Posts")
+	assert.NoError(t, err)
+	assert.Equal(t, relKindMorphToMany, desc.kind)
+	assert.True(t, desc.morphInverse)
+	// For inverse, the morph value pins on the related's morph value.
+	assert.Equal(t, "morph_posts", desc.morphValue)
+}
+
+func TestResolveRelation_MorphBadKind(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &morphBadKind{}, "X")
+	assert.True(t, errors.Is(err, errors.OrmMorphRelationKindUnknown))
+}
+
+func TestResolveRelation_MorphMissingRelated(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &morphMissingRelated{}, "X")
+	assert.True(t, errors.Is(err, errors.OrmMorphRelationMissingField))
+}
+
+// --- Forbidden GORM polymorphic tag ---
+
+type forbiddenPolymorphicParent struct {
+	ID     uint
+	Houses []*forbiddenPolymorphicChild `gorm:"polymorphic:Houseable"`
+}
+
+type forbiddenPolymorphicChild struct {
+	ID            uint
+	HouseableID   uint
+	HouseableType string
+}
+
+func TestResolveRelation_ForbidsPolymorphicTag(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &forbiddenPolymorphicParent{}, "Houses")
+	assert.True(t, errors.Is(err, errors.OrmPolymorphicTagForbidden))
 }

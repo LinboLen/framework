@@ -448,16 +448,22 @@ func (r *Query) applyMorphExistence(db *gormio.DB, parent any, item relationExis
 		_ = db.AddError(err)
 		return db
 	}
-	if desc.kind != relKindMorphOne && desc.kind != relKindMorphMany {
-		_ = db.AddError(errors.OrmRelationUnsupported.Args(item.relation, fmt.Sprintf("%T", parent), "morph (must be polymorphic HasOne/HasMany)"))
+	switch desc.kind {
+	case relKindMorphOne, relKindMorphMany:
+		return r.applyOutboundMorphExistence(db, desc, item)
+	case relKindMorphTo:
+		return r.applyMorphToExistence(db, desc, item)
+	default:
+		_ = db.AddError(errors.OrmRelationUnsupported.Args(item.relation, fmt.Sprintf("%T", parent), "morph (must be polymorphic relation)"))
 		return db
 	}
+}
 
-	// In GORM, the morph_type column lives on the *related* table (e.g. houses.houseable_type),
-	// not on the parent. So for each requested type we build a correlated EXISTS subquery whose
-	// inner WHERE pins houses.houseable_type to that type's table name. Multiple types are
-	// joined with OR inside a sub-DB; the resulting group attaches to the outer query as a single
-	// nested AND/OR clause.
+// applyOutboundMorphExistence builds the morph-existence clauses for outbound MorphOne /
+// MorphMany. The morph_type column lives on the *related* table (e.g. houses.houseable_type), so
+// for each requested type we build a correlated EXISTS subquery whose inner WHERE pins
+// houses.houseable_type to that type's morph value. Multiple types are joined with OR.
+func (r *Query) applyOutboundMorphExistence(db *gormio.DB, desc *relationDescriptor, item relationExistence) *gormio.DB {
 	sub := r.freshSession()
 	first := true
 	for _, typeModel := range item.morphTypes {
@@ -466,6 +472,7 @@ func (r *Query) applyMorphExistence(db *gormio.DB, parent any, item relationExis
 			_ = db.AddError(terr)
 			continue
 		}
+		morphValue = resolveMorphValue(typeModel, morphValue)
 
 		var perTypeCallback contractsorm.RelationCallback
 		if item.morphCallback != nil {
@@ -515,6 +522,92 @@ func (r *Query) applyMorphExistence(db *gormio.DB, parent any, item relationExis
 	return db.Where(sub)
 }
 
+// applyMorphToExistence builds the inverse-polymorphic existence clauses. Mirrors fedaco's
+// hasMorph at libs/fedaco/src/fedaco/mixins/queries-relationships.ts:320-378: for each requested
+// type, we synthesise a BelongsTo-shaped subquery against that type's table, and AND it with a
+// type filter on the parent's morph_type column. The per-type clauses are OR-ed together.
+//
+// Generated SQL pattern:
+//
+//	WHERE (
+//	     (parents.imageable_type = 'post'  AND ((SELECT count(*) FROM posts  WHERE posts.id  = parents.imageable_id) >= N))
+//	  OR (parents.imageable_type = 'video' AND ((SELECT count(*) FROM videos WHERE videos.id = parents.imageable_id) >= N))
+//	)
+func (r *Query) applyMorphToExistence(db *gormio.DB, desc *relationDescriptor, item relationExistence) *gormio.DB {
+	sub := r.freshSession()
+	first := true
+	ownerKey := desc.morphOwnerKey
+	if ownerKey == "" {
+		ownerKey = "id"
+	}
+
+	for _, typeModel := range item.morphTypes {
+		relatedTable, terr := tableNameFor(r.instance, typeModel)
+		if terr != nil {
+			_ = db.AddError(terr)
+			continue
+		}
+		morphValue := resolveMorphValue(typeModel, relatedTable)
+
+		// Per-type callback resolution (same shape as outbound morph existence).
+		var perTypeCallback contractsorm.RelationCallback
+		if item.morphCallback != nil {
+			cb := item.morphCallback
+			captured := morphValue
+			perTypeCallback = func(q contractsorm.Query) contractsorm.Query {
+				return cb(q, captured)
+			}
+		} else {
+			perTypeCallback = item.callback
+		}
+
+		// Build the BelongsTo-shaped inner: SELECT * FROM <relatedTable> WHERE
+		// <relatedTable>.<ownerKey> = <parentTable>.<morphIDColumn>.
+		inner := r.freshSession().Table(relatedTable).Where(fmt.Sprintf("%s.%s = %s.%s",
+			quoteIdent(relatedTable), quoteIdent(ownerKey),
+			quoteIdent(desc.parentTable), quoteIdent(desc.morphIDColumn)))
+		if perTypeCallback != nil {
+			wrapper := r.wrap(inner)
+			result := perTypeCallback(wrapper)
+			if w, ok := result.(*Query); ok {
+				inner = w.buildConditions().instance
+			}
+		}
+
+		// Type filter applied at the outer level (parent table).
+		typeClause := fmt.Sprintf("%s.%s = ?", quoteIdent(desc.parentTable), quoteIdent(desc.morphTypeColumn))
+		typeArgs := []any{morphValue}
+
+		var perType *gormio.DB
+		if shouldUseExists(item.operator, item.count) {
+			negate := item.operator == "<" && item.count == 1
+			if negate {
+				perType = r.freshSession().Where(typeClause, typeArgs...).Where("NOT EXISTS (?)", inner)
+			} else {
+				perType = r.freshSession().Where(typeClause, typeArgs...).Where("EXISTS (?)", inner)
+			}
+		} else {
+			countInner := inner.Select("COUNT(*)")
+			perType = r.freshSession().Where(typeClause, typeArgs...).Where(fmt.Sprintf("(?) %s ?", item.operator), countInner, item.count)
+		}
+
+		if first {
+			sub = sub.Where(perType)
+			first = false
+		} else {
+			sub = sub.Or(perType)
+		}
+	}
+	if first {
+		return db
+	}
+
+	if item.conjunction == "or" {
+		return db.Or(sub)
+	}
+	return db.Where(sub)
+}
+
 // compileExistenceSubquery returns a *gormio.DB representing the inner SELECT correlated to the
 // parent table. The returned DB is intended to be passed as a value bound to a "?" placeholder
 // in the outer query (GORM will inline it as a subquery and merge bindings).
@@ -542,6 +635,16 @@ func (r *Query) compileExistenceSubquery(desc *relationDescriptor, callback cont
 		inner = inner.Where(fmt.Sprintf("%s.%s = %s.%s",
 			quoteIdent(desc.pivotTable), quoteIdent(desc.pivotParentRef.foreignColumn),
 			quoteIdent(desc.pivotParentRef.primaryTable), quoteIdent(desc.pivotParentRef.primaryColumn)))
+	case relKindMorphToMany:
+		inner = inner.Joins(fmt.Sprintf("INNER JOIN %s ON %s.%s = %s.%s",
+			quoteIdent(desc.pivotTable),
+			quoteIdent(desc.pivotTable), quoteIdent(desc.pivotRelatedRef.foreignColumn),
+			quoteIdent(desc.relatedTable), quoteIdent(desc.pivotRelatedRef.primaryColumn)))
+		inner = inner.Where(fmt.Sprintf("%s.%s = %s.%s",
+			quoteIdent(desc.pivotTable), quoteIdent(desc.pivotParentRef.foreignColumn),
+			quoteIdent(desc.pivotParentRef.primaryTable), quoteIdent(desc.pivotParentRef.primaryColumn)))
+		inner = inner.Where(fmt.Sprintf("%s.%s = ?",
+			quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	case relKindMorphOne, relKindMorphMany:
 		for _, ref := range desc.references {
 			inner = inner.Where(fmt.Sprintf("%s.%s = %s.%s",

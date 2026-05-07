@@ -23,12 +23,21 @@ type Conditions struct {
 	where               []contractsdriver.Where
 	eagerLoad           []eagerLoadEntry
 	relations           []relationExistence
+	oneOfMany           *oneOfManyConfig
 	distinct            bool
 	lockForUpdate       bool
 	sharedLock          bool
 	withoutEvents       bool
 	withoutGlobalScopes []string
 	withTrashed         bool
+}
+
+// oneOfManyConfig captures the column + aggregate for OfMany / LatestOfMany / OldestOfMany when
+// they are called inside a With() eager-load callback. It's read by runRelatedQuery, which
+// rewrites the inner query into an INNER JOIN over a per-parent aggregate subquery.
+type oneOfManyConfig struct {
+	column    string
+	aggregate string // "MAX" | "MIN" | other SQL aggregate
 }
 
 type Select struct {

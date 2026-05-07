@@ -8,6 +8,7 @@ import (
 	gormio "gorm.io/gorm"
 	gormschema "gorm.io/gorm/schema"
 
+	"github.com/goravel/framework/database/orm/morphmap"
 	"github.com/goravel/framework/errors"
 )
 
@@ -74,6 +75,10 @@ func (r *Query) loadOneRelation(parents []reflect.Value, parentModel any, entry 
 		return r.loadMany2Many(parents, parentModel, desc, entry, nested)
 	case relKindMorphOne, relKindMorphMany:
 		return r.loadMorph(parents, parentModel, desc, entry, nested, desc.kind == relKindMorphMany)
+	case relKindMorphTo:
+		return r.loadMorphTo(parents, parentModel, desc, entry, nested)
+	case relKindMorphToMany:
+		return r.loadMorphToMany(parents, parentModel, desc, entry, nested)
 	case relKindHasOneThrough, relKindHasManyThrough:
 		return r.loadThrough(parents, parentModel, desc, entry, nested, desc.kind == relKindHasManyThrough)
 	}
@@ -230,6 +235,158 @@ func (r *Query) loadMorph(parents []reflect.Value, parentModel any, desc *relati
 	return r.recurseNested(rows, nested)
 }
 
+// loadMorphTo eager-loads the inverse polymorphic relation. Unlike the outbound MorphOne /
+// MorphMany loaders, the related Go type is unknown at descriptor build time and discovered per
+// row from the value of the *_type column. Parents are bucketed by morph type, and each bucket
+// runs an IN query against its resolved table.
+func (r *Query) loadMorphTo(parents []reflect.Value, parentModel any, desc *relationDescriptor, entry eagerLoadEntry, nested []eagerLoadEntry) error {
+	parentSchema, err := parseGormSchema(r.instance, parentModel)
+	if err != nil {
+		return err
+	}
+	typeField, ok := parentSchema.FieldsByDBName[desc.morphTypeColumn]
+	if !ok {
+		return errors.OrmRelationUnsupported.Args(entry.relation, parentSchema.Name, "no parent field for "+desc.morphTypeColumn)
+	}
+	idField, ok := parentSchema.FieldsByDBName[desc.morphIDColumn]
+	if !ok {
+		return errors.OrmRelationUnsupported.Args(entry.relation, parentSchema.Name, "no parent field for "+desc.morphIDColumn)
+	}
+
+	// Bucket parents by morph type, deduplicating IDs per bucket.
+	type bucket struct {
+		keys      []any
+		seenKeys  map[string]struct{}
+		parents   []reflect.Value
+		parentIDs []string // per parent, the dictKey for matching back
+	}
+	buckets := make(map[string]*bucket)
+	parentMorphKey := make([]string, len(parents))     // morph type per parent
+	parentBucketKey := make([]string, len(parents))    // dictKey of id per parent
+	for i, parent := range parents {
+		typeVal, typeZero := typeField.ValueOf(r.ctx, parent)
+		idVal, idZero := idField.ValueOf(r.ctx, parent)
+		if typeZero || idZero {
+			continue
+		}
+		morphType, _ := typeVal.(string)
+		if morphType == "" {
+			morphType = fmt.Sprint(typeVal)
+		}
+		k := dictKey(idVal)
+		b, exists := buckets[morphType]
+		if !exists {
+			b = &bucket{seenKeys: map[string]struct{}{}}
+			buckets[morphType] = b
+		}
+		if _, dup := b.seenKeys[k]; !dup {
+			b.seenKeys[k] = struct{}{}
+			b.keys = append(b.keys, idVal)
+		}
+		parentMorphKey[i] = morphType
+		parentBucketKey[i] = k
+	}
+
+	if len(buckets) == 0 {
+		// No parents pointed at anything; clear the relation field on each.
+		for _, parent := range parents {
+			if err := setRelationField(parent, entry.relation, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// For each bucket: resolve type, run IN query, build a per-bucket id->row dict.
+	type resolvedBucket struct {
+		dict map[string]reflect.Value // parent's dictKey(idVal) -> *RelatedModel
+		rows []reflect.Value
+	}
+	resolved := make(map[string]resolvedBucket, len(buckets))
+	allRows := make([]reflect.Value, 0)
+
+	for morphType, b := range buckets {
+		sample := morphmap.Find(morphType)
+		if sample == nil {
+			return errors.OrmMorphTypeUnknown.Args(morphType)
+		}
+		relatedTable, terr := tableNameFor(r.instance, sample)
+		if terr != nil {
+			return terr
+		}
+		// Make a per-bucket descriptor so runChunkedRelatedQuery's user-callback gets a
+		// related-shaped query.
+		bucketDesc := &relationDescriptor{
+			kind:         relKindBelongsTo, // BelongsTo-shaped: WHERE related.<owner_key> IN ?
+			parentTable:  desc.parentTable,
+			relatedTable: relatedTable,
+			relatedModel: sample,
+		}
+		ownerKey := desc.morphOwnerKey
+		if ownerKey == "" {
+			ownerKey = "id"
+		}
+
+		rows, qerr := r.runChunkedRelatedQuery(b.keys, bucketDesc, entry, []string{ownerKey}, func(chunk []any) *gormio.DB {
+			return r.freshSession().
+				Table(relatedTable).
+				Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(relatedTable), quoteIdent(ownerKey)), chunk)
+		})
+		if qerr != nil {
+			return qerr
+		}
+		allRows = append(allRows, rows...)
+
+		relatedSchema, perr := parseGormSchema(r.instance, sample)
+		if perr != nil {
+			return perr
+		}
+		ownerField, ok := relatedSchema.FieldsByDBName[ownerKey]
+		if !ok {
+			return errors.OrmRelationUnsupported.Args(entry.relation, relatedSchema.Name, "no owner key field for "+ownerKey)
+		}
+		dict := make(map[string]reflect.Value, len(rows))
+		for _, row := range rows {
+			val, _ := ownerField.ValueOf(r.ctx, row.Elem())
+			dict[dictKey(val)] = row
+		}
+		resolved[morphType] = resolvedBucket{dict: dict, rows: rows}
+	}
+
+	// Assign each parent the row it pointed to.
+	for i, parent := range parents {
+		morphType := parentMorphKey[i]
+		idKey := parentBucketKey[i]
+		if morphType == "" || idKey == "" {
+			if err := setRelationField(parent, entry.relation, nil); err != nil {
+				return err
+			}
+			continue
+		}
+		bucketResult, ok := resolved[morphType]
+		if !ok {
+			if err := setRelationField(parent, entry.relation, nil); err != nil {
+				return err
+			}
+			continue
+		}
+		row, ok := bucketResult.dict[idKey]
+		if !ok {
+			if err := setRelationField(parent, entry.relation, nil); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := setRelationField(parent, entry.relation, []reflect.Value{row}); err != nil {
+			return err
+		}
+	}
+
+	return r.recurseNested(allRows, nested)
+}
+
+// loadMany2Many eager-loads a regular many-to-many relation through a pivot table whose schema
+// is described by GORM's parsed metadata.
 func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *relationDescriptor, entry eagerLoadEntry, nested []eagerLoadEntry) error {
 	parentSchema, err := parseGormSchema(r.instance, parentModel)
 	if err != nil {
@@ -253,6 +410,92 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 			Table(desc.pivotTable).
 			Select(pivotParentCol, pivotRelatedCol).
 			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(pivotParentCol)), chunk)
+	})
+	if err != nil {
+		return err
+	}
+	if len(pivotRows) == 0 {
+		return r.maybeRecurseEmpty(parents, entry.relation, true, nested)
+	}
+
+	relatedKeysSet := make(map[string]any, len(pivotRows))
+	for _, p := range pivotRows {
+		k := dictKey(p[pivotRelatedCol])
+		if _, exists := relatedKeysSet[k]; !exists {
+			relatedKeysSet[k] = p[pivotRelatedCol]
+		}
+	}
+	relatedKeys := make([]any, 0, len(relatedKeysSet))
+	for _, v := range relatedKeysSet {
+		relatedKeys = append(relatedKeys, v)
+	}
+
+	rows, err := r.runChunkedRelatedQuery(relatedKeys, desc, entry, []string{desc.pivotRelatedRef.primaryColumn}, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.relatedTable).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.relatedTable), quoteIdent(desc.pivotRelatedRef.primaryColumn)), chunk)
+	})
+	if err != nil {
+		return err
+	}
+
+	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
+	if err != nil {
+		return err
+	}
+	relatedPKField, ok := relatedSchema.FieldsByDBName[desc.pivotRelatedRef.primaryColumn]
+	if !ok {
+		return errors.OrmRelationUnsupported.Args(entry.relation, relatedSchema.Name, "no related PK field for "+desc.pivotRelatedRef.primaryColumn)
+	}
+	relatedByID := make(map[string]reflect.Value, len(rows))
+	for _, row := range rows {
+		val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
+		relatedByID[dictKey(val)] = row
+	}
+
+	dict := make(map[string][]reflect.Value, len(parents))
+	for _, p := range pivotRows {
+		parentKey := dictKey(p[pivotParentCol])
+		relatedKey := dictKey(p[pivotRelatedCol])
+		if rel, ok := relatedByID[relatedKey]; ok {
+			dict[parentKey] = append(dict[parentKey], rel)
+		}
+	}
+
+	if err := r.assignToParents(parents, parentField, entry.relation, dict, true); err != nil {
+		return err
+	}
+	return r.recurseNested(rows, nested)
+}
+
+// loadMorphToMany eager-loads polymorphic many-to-many. Mirrors loadMany2Many with one extra
+// pivot WHERE that pins the morph_type column to desc.morphValue. Both MorphToMany (forward) and
+// MorphedByMany (inverse) share this code path; the difference between them is captured in
+// desc.morphValue at descriptor-build time.
+func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *relationDescriptor, entry eagerLoadEntry, nested []eagerLoadEntry) error {
+	parentSchema, err := parseGormSchema(r.instance, parentModel)
+	if err != nil {
+		return err
+	}
+	parentField, ok := parentSchema.FieldsByDBName[desc.pivotParentRef.primaryColumn]
+	if !ok {
+		return errors.OrmRelationUnsupported.Args(entry.relation, parentSchema.Name, "no parent field for "+desc.pivotParentRef.primaryColumn)
+	}
+
+	keys := extractKeys(r, parents, parentField)
+	if len(keys) == 0 {
+		return r.maybeRecurseEmpty(parents, entry.relation, true, nested)
+	}
+
+	pivotParentCol := desc.pivotParentRef.foreignColumn
+	pivotRelatedCol := desc.pivotRelatedRef.foreignColumn
+
+	pivotRows, err := r.chunkedFindMaps(keys, func(chunk []any) *gormio.DB {
+		return r.freshSession().
+			Table(desc.pivotTable).
+			Select(pivotParentCol, pivotRelatedCol).
+			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(pivotParentCol)), chunk).
+			Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	})
 	if err != nil {
 		return err
@@ -401,12 +644,17 @@ func (r *Query) loadThrough(parents []reflect.Value, parentModel any, desc *rela
 // they are appended to the user's prune list when not already present so the caller does not have
 // to remember to include them.
 func (r *Query) runRelatedQuery(inner *gormio.DB, desc *relationDescriptor, entry eagerLoadEntry, requiredCols []string) ([]reflect.Value, error) {
+	var oneOfMany *oneOfManyConfig
 	if entry.callback != nil {
 		wrapper := r.wrap(inner)
 		wrapped := entry.callback(wrapper)
 		if w, ok := wrapped.(*Query); ok {
+			oneOfMany = w.conditions.oneOfMany
 			inner = w.buildConditions().instance
 		}
+	}
+	if oneOfMany != nil {
+		inner = r.applyOneOfManyJoin(inner, desc, oneOfMany)
 	}
 	if len(entry.columns) > 0 {
 		cols := append([]string(nil), entry.columns...)
@@ -651,7 +899,8 @@ func containsCol(cols []string, col string) bool {
 }
 
 // setRelationField writes loaded rows back to parent's relation field. Supports *Model,
-// []*Model and []Model field shapes.
+// []*Model, []Model, and `any` (interface) field shapes — the last is used by MorphTo, where the
+// concrete loaded type is determined per row from the morph map.
 func setRelationField(parent reflect.Value, fieldName string, rows []reflect.Value) error {
 	field := parent.FieldByName(fieldName)
 	if !field.IsValid() {
@@ -662,6 +911,23 @@ func setRelationField(parent reflect.Value, fieldName string, rows []reflect.Val
 	}
 
 	switch field.Kind() {
+	case reflect.Interface:
+		if len(rows) == 0 {
+			field.Set(reflect.Zero(field.Type()))
+			return nil
+		}
+		row := rows[0]
+		if row.Type().Implements(field.Type()) {
+			field.Set(row)
+			return nil
+		}
+		// `any` (empty interface) — anything implements it.
+		if field.Type().NumMethod() == 0 {
+			field.Set(row)
+			return nil
+		}
+		return errors.OrmEagerLoadCannotAssign.Args(fieldName, parent.Type().String())
+
 	case reflect.Pointer:
 		if len(rows) == 0 {
 			field.Set(reflect.Zero(field.Type()))

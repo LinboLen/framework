@@ -462,6 +462,34 @@ func (r *Query) Limit(limit int) contractsorm.Query {
 	return r.setConditions(conditions)
 }
 
+func (r *Query) OfMany(column, aggregate string) contractsorm.Query {
+	if column == "" {
+		column = "id"
+	}
+	if aggregate == "" {
+		aggregate = "MAX"
+	}
+	conditions := r.conditions
+	conditions.oneOfMany = &oneOfManyConfig{column: column, aggregate: aggregate}
+	return r.setConditions(conditions)
+}
+
+func (r *Query) LatestOfMany(column ...string) contractsorm.Query {
+	col := ""
+	if len(column) > 0 {
+		col = column[0]
+	}
+	return r.OfMany(col, "MAX")
+}
+
+func (r *Query) OldestOfMany(column ...string) contractsorm.Query {
+	col := ""
+	if len(column) > 0 {
+		col = column[0]
+	}
+	return r.OfMany(col, "MIN")
+}
+
 func (r *Query) Load(model any, relation string, args ...any) error {
 	if relation == "" {
 		return errors.OrmQueryEmptyRelation

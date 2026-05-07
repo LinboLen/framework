@@ -173,3 +173,119 @@ type ThroughRelation struct {
 type ModelWithThroughRelations interface {
 	ThroughRelations() map[string]ThroughRelation
 }
+
+// MorphRelationKind enumerates the five polymorphic relation kinds. All polymorphic relations in
+// Goravel are declared via ModelWithMorphRelations; GORM `polymorphic:` struct tags are
+// forbidden because they cannot express the inverse direction (MorphTo) and the polymorphic
+// many-to-many flavours (MorphToMany / MorphedByMany).
+type MorphRelationKind string
+
+const (
+	// MorphOne is the single-result outbound polymorphic relation. The related model holds
+	// `<Name>_id` and `<Name>_type` columns referencing the parent.
+	MorphOne MorphRelationKind = "morphOne"
+	// MorphMany is the multi-result outbound polymorphic relation.
+	MorphMany MorphRelationKind = "morphMany"
+	// MorphTo is the inverse polymorphic relation: the model holds `<Name>_id` + `<Name>_type`
+	// and resolves to one of several parent types via the morph map registry.
+	MorphTo MorphRelationKind = "morphTo"
+	// MorphToMany is a polymorphic many-to-many through a pivot table that carries
+	// `<Name>_id` + `<Name>_type` plus the parent's foreign key.
+	MorphToMany MorphRelationKind = "morphToMany"
+	// MorphedByMany is the inverse of MorphToMany — the side reached *through* a polymorphic
+	// many-to-many. Same pivot, but the morph value pins on the related side.
+	MorphedByMany MorphRelationKind = "morphedByMany"
+)
+
+// MorphRelation describes one polymorphic relationship. Field relevance depends on Kind:
+//
+//	MorphOne / MorphMany:        Related, Name, TypeColumn, IDColumn, LocalKey
+//	MorphTo:                     Name, TypeColumn, IDColumn, OwnerKey
+//	MorphToMany / MorphedByMany: Related, Name, Table, ForeignPivotKey, RelatedPivotKey,
+//	                             ParentKey, RelatedKey, PivotColumns, PivotTimestamps
+//
+// Most fields default sensibly when left zero — see field-level docstrings for the exact rule.
+//
+// Example — outbound MorphMany declared on the parent:
+//
+//	func (Post) MorphRelations() map[string]orm.MorphRelation {
+//	    return map[string]orm.MorphRelation{
+//	        "Images": {Kind: orm.MorphMany, Related: &Image{}, Name: "imageable"},
+//	    }
+//	}
+//
+// Example — inverse MorphTo declared on the child:
+//
+//	type Image struct {
+//	    ImageableID   uint
+//	    ImageableType string
+//	    Imageable     any  // populated by the eager loader with *Post / *Video / etc.
+//	}
+//
+//	func (Image) MorphRelations() map[string]orm.MorphRelation {
+//	    return map[string]orm.MorphRelation{
+//	        "Imageable": {Kind: orm.MorphTo, Name: "imageable"},
+//	    }
+//	}
+type MorphRelation struct {
+	// Kind selects the polymorphic flavour. Required.
+	Kind MorphRelationKind
+
+	// Related is a sample instance of the related model (e.g. &Image{}). Required for every
+	// kind except MorphTo, where the related type is resolved per-row via the morph map.
+	Related any
+
+	// Name is the polymorphic name (e.g. "imageable", "taggable"). Required. Used to derive
+	// default column names: TypeColumn defaults to "<Name>_type", IDColumn to "<Name>_id",
+	// and pivot fields when zero.
+	Name string
+
+	// TypeColumn is the morph type column on the related table (or pivot, for MorphToMany).
+	// Defaults to "<Name>_type" when empty.
+	TypeColumn string
+
+	// IDColumn is the morph id column on the related table. Defaults to "<Name>_id" when empty.
+	IDColumn string
+
+	// LocalKey is the parent column that the related's *_id references. Defaults to "id".
+	// Used by MorphOne / MorphMany.
+	LocalKey string
+
+	// OwnerKey is the related-table column that *_id references. Defaults to "id".
+	// Used by MorphTo.
+	OwnerKey string
+
+	// Table is the pivot table name for MorphToMany / MorphedByMany. When empty defaults to
+	// the plural snake-case of Name (e.g. "taggable" -> "taggables").
+	Table string
+
+	// ForeignPivotKey is the pivot column referencing the parent (or, for MorphedByMany, the
+	// related). Defaults to "<Name>_id".
+	ForeignPivotKey string
+
+	// RelatedPivotKey is the pivot column referencing the related (or, for MorphedByMany, the
+	// parent). Defaults to "<related-table-singular>_id".
+	RelatedPivotKey string
+
+	// ParentKey is the parent column referenced by ForeignPivotKey. Defaults to "id".
+	ParentKey string
+
+	// RelatedKey is the related column referenced by RelatedPivotKey. Defaults to "id".
+	RelatedKey string
+
+	// PivotColumns are extra pivot columns to surface on loaded results.
+	PivotColumns []string
+
+	// PivotTimestamps, when true, expects created_at / updated_at columns on the pivot.
+	PivotTimestamps bool
+}
+
+// ModelWithMorphRelations is implemented by models that declare polymorphic relationships. The
+// map is keyed by the relation name used at call sites (e.g. q.With("Imageable")).
+//
+// This is the *only* way Goravel resolves polymorphic relationships. The corresponding GORM
+// struct-tag mechanism (`gorm:"polymorphic:..."`) is forbidden because it cannot express the
+// inverse direction or polymorphic many-to-many flavours.
+type ModelWithMorphRelations interface {
+	MorphRelations() map[string]MorphRelation
+}

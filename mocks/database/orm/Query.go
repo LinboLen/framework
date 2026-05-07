@@ -1867,6 +1867,67 @@ func (_c *Query_Join_Call) RunAndReturn(run func(string, ...interface{}) orm.Que
 	return _c
 }
 
+// LatestOfMany provides a mock function with given fields: column
+func (_m *Query) LatestOfMany(column ...string) orm.Query {
+	_va := make([]interface{}, len(column))
+	for _i := range column {
+		_va[_i] = column[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LatestOfMany")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(...string) orm.Query); ok {
+		r0 = rf(column...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Query_LatestOfMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LatestOfMany'
+type Query_LatestOfMany_Call struct {
+	*mock.Call
+}
+
+// LatestOfMany is a helper method to define mock.On call
+//   - column ...string
+func (_e *Query_Expecter) LatestOfMany(column ...interface{}) *Query_LatestOfMany_Call {
+	return &Query_LatestOfMany_Call{Call: _e.mock.On("LatestOfMany",
+		append([]interface{}{}, column...)...)}
+}
+
+func (_c *Query_LatestOfMany_Call) Run(run func(column ...string)) *Query_LatestOfMany_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]string, len(args)-0)
+		for i, a := range args[0:] {
+			if a != nil {
+				variadicArgs[i] = a.(string)
+			}
+		}
+		run(variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Query_LatestOfMany_Call) Return(_a0 orm.Query) *Query_LatestOfMany_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Query_LatestOfMany_Call) RunAndReturn(run func(...string) orm.Query) *Query_LatestOfMany_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Limit provides a mock function with given fields: limit
 func (_m *Query) Limit(limit int) orm.Query {
 	ret := _m.Called(limit)
@@ -2220,6 +2281,55 @@ func (_c *Query_Model_Call) RunAndReturn(run func(interface{}) orm.Query) *Query
 	return _c
 }
 
+// OfMany provides a mock function with given fields: column, aggregate
+func (_m *Query) OfMany(column string, aggregate string) orm.Query {
+	ret := _m.Called(column, aggregate)
+
+	if len(ret) == 0 {
+		panic("no return value specified for OfMany")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(string, string) orm.Query); ok {
+		r0 = rf(column, aggregate)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Query_OfMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OfMany'
+type Query_OfMany_Call struct {
+	*mock.Call
+}
+
+// OfMany is a helper method to define mock.On call
+//   - column string
+//   - aggregate string
+func (_e *Query_Expecter) OfMany(column interface{}, aggregate interface{}) *Query_OfMany_Call {
+	return &Query_OfMany_Call{Call: _e.mock.On("OfMany", column, aggregate)}
+}
+
+func (_c *Query_OfMany_Call) Run(run func(column string, aggregate string)) *Query_OfMany_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Query_OfMany_Call) Return(_a0 orm.Query) *Query_OfMany_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Query_OfMany_Call) RunAndReturn(run func(string, string) orm.Query) *Query_OfMany_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Offset provides a mock function with given fields: offset
 func (_m *Query) Offset(offset int) orm.Query {
 	ret := _m.Called(offset)
@@ -2264,6 +2374,67 @@ func (_c *Query_Offset_Call) Return(_a0 orm.Query) *Query_Offset_Call {
 }
 
 func (_c *Query_Offset_Call) RunAndReturn(run func(int) orm.Query) *Query_Offset_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// OldestOfMany provides a mock function with given fields: column
+func (_m *Query) OldestOfMany(column ...string) orm.Query {
+	_va := make([]interface{}, len(column))
+	for _i := range column {
+		_va[_i] = column[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for OldestOfMany")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(...string) orm.Query); ok {
+		r0 = rf(column...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Query_OldestOfMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OldestOfMany'
+type Query_OldestOfMany_Call struct {
+	*mock.Call
+}
+
+// OldestOfMany is a helper method to define mock.On call
+//   - column ...string
+func (_e *Query_Expecter) OldestOfMany(column ...interface{}) *Query_OldestOfMany_Call {
+	return &Query_OldestOfMany_Call{Call: _e.mock.On("OldestOfMany",
+		append([]interface{}{}, column...)...)}
+}
+
+func (_c *Query_OldestOfMany_Call) Run(run func(column ...string)) *Query_OldestOfMany_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]string, len(args)-0)
+		for i, a := range args[0:] {
+			if a != nil {
+				variadicArgs[i] = a.(string)
+			}
+		}
+		run(variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Query_OldestOfMany_Call) Return(_a0 orm.Query) *Query_OldestOfMany_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Query_OldestOfMany_Call) RunAndReturn(run func(...string) orm.Query) *Query_OldestOfMany_Call {
 	_c.Call.Return(run)
 	return _c
 }

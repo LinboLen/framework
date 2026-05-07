@@ -116,6 +116,20 @@ type Query interface {
 	LockForUpdate() Query
 	// Model sets the model instance to be queried.
 	Model(value any) Query
+	// OfMany configures a HasOne or MorphOne relation to return the row whose value of column
+	// matches the given SQL aggregate ("MAX" / "MIN") within each parent. Intended for use
+	// inside a With(...) callback so the rewrite is local to a single relation:
+	//
+	//	q.With("LatestImage", func(q orm.Query) orm.Query {
+	//	    return q.OfMany("created_at", "MAX")
+	//	})
+	OfMany(column, aggregate string) Query
+	// LatestOfMany is shorthand for OfMany(column, "MAX") with column defaulting to "id" when
+	// empty. Mirrors fedaco's latestOfMany().
+	LatestOfMany(column ...string) Query
+	// OldestOfMany is shorthand for OfMany(column, "MIN") with column defaulting to "id" when
+	// empty. Mirrors fedaco's oldestOfMany().
+	OldestOfMany(column ...string) Query
 	// Offset specifies the number of records to skip before starting to return the records.
 	Offset(offset int) Query
 	// Omit specifies columns that should be omitted from the query.

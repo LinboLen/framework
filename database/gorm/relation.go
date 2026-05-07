@@ -7,7 +7,9 @@ import (
 	gormschema "gorm.io/gorm/schema"
 
 	contractsorm "github.com/goravel/framework/contracts/database/orm"
+	"github.com/goravel/framework/database/orm/morphmap"
 	"github.com/goravel/framework/errors"
+	"github.com/goravel/framework/support/str"
 )
 
 // relationKind enumerates every relationship flavour the resolver can describe.
@@ -23,6 +25,7 @@ const (
 	relKindMorphOne
 	relKindMorphMany
 	relKindMorphTo
+	relKindMorphToMany
 	relKindHasOneThrough
 	relKindHasManyThrough
 )
@@ -53,9 +56,11 @@ type relationDescriptor struct {
 	pivotRelatedRef referenceKey
 
 	// polymorphic specifics
-	morphTypeColumn string // e.g. "houseable_type"
-	morphIDColumn   string // e.g. "houseable_id"
-	morphValue      string // e.g. "users"
+	morphTypeColumn string // e.g. "imageable_type" — on parent table for MorphTo, on pivot for MorphToMany
+	morphIDColumn   string // e.g. "imageable_id"  — on parent table for MorphTo, on pivot for MorphToMany
+	morphValue      string // e.g. "post"          — used in WHERE *_type = ? filters
+	morphOwnerKey   string // PK on each related model for MorphTo (defaults to "id")
+	morphInverse    bool   // true for MorphedByMany — flips morph value source from parent to related
 
 	// through specifics
 	throughTable   string
@@ -87,13 +92,25 @@ func resolveRelation(db *gormio.DB, parent any, relation string) (*relationDescr
 	parentSchema := stmt.Schema
 	parentTable := parentSchema.Table
 
-	desc, err := descriptorFromGormRelation(parentSchema, parentTable, head)
+	// Polymorphic relations are declared via the MorphRelations() method and resolved before
+	// GORM's parsed schema. This is the only path that can describe MorphTo / MorphToMany /
+	// MorphedByMany; for MorphOne / MorphMany it also gives the framework an opt-out from
+	// GORM's `polymorphic:` tag (which is forbidden — see descriptorFromGormRelation).
+	desc, err := descriptorFromMorph(db, parent, parentTable, head)
 	if err == nil {
-		// Found via GORM's parsed metadata.
+		// Found via MorphRelations() declaration.
 	} else if errors.Is(err, errors.OrmRelationNotFound) {
-		// Fall back to the model's ThroughRelations() declaration.
-		desc, err = descriptorFromThrough(db, parent, parentTable, head)
-		if err != nil {
+		// Fall through to GORM-parsed metadata.
+		desc, err = descriptorFromGormRelation(parent, parentSchema, parentTable, head)
+		if err == nil {
+			// Found via GORM's parsed metadata.
+		} else if errors.Is(err, errors.OrmRelationNotFound) {
+			// Final fallback: ThroughRelations() declaration.
+			desc, err = descriptorFromThrough(db, parent, parentTable, head)
+			if err != nil {
+				return nil, err
+			}
+		} else {
 			return nil, err
 		}
 	} else {
@@ -116,12 +133,19 @@ func resolveRelation(db *gormio.DB, parent any, relation string) (*relationDescr
 	return desc, nil
 }
 
-// descriptorFromGormRelation handles HasOne, HasMany, BelongsTo, Many2Many and the polymorphic
-// HasOne/HasMany variants - everything GORM's struct tags can describe.
-func descriptorFromGormRelation(parentSchema *gormschema.Schema, parentTable, name string) (*relationDescriptor, error) {
+// descriptorFromGormRelation handles HasOne, HasMany, BelongsTo and Many2Many — every
+// non-polymorphic relation GORM's struct tags can describe. Polymorphic relations declared via
+// `gorm:"polymorphic:..."` are forbidden; this function errors out with
+// errors.OrmPolymorphicTagForbidden when it detects one. Polymorphic relations are declared via
+// MorphRelations() and resolved by descriptorFromMorph instead.
+func descriptorFromGormRelation(parent any, parentSchema *gormschema.Schema, parentTable, name string) (*relationDescriptor, error) {
 	rel, ok := parentSchema.Relationships.Relations[name]
 	if !ok {
 		return nil, errors.OrmRelationNotFound.Args(name, parentSchema.Name)
+	}
+
+	if rel.Polymorphic != nil {
+		return nil, errors.OrmPolymorphicTagForbidden.Args(name, parentSchema.Name)
 	}
 
 	related := rel.FieldSchema
@@ -132,31 +156,6 @@ func descriptorFromGormRelation(parentSchema *gormschema.Schema, parentTable, na
 	}
 
 	switch {
-	case rel.Polymorphic != nil:
-		// Polymorphic HasOne / HasMany. References has 2 entries:
-		//   [0] PrimaryValue + ForeignKey (the type column)
-		//   [1] PrimaryKey + ForeignKey  (the id column)
-		if len(rel.References) < 2 {
-			return nil, errors.OrmRelationUnsupported.Args(name, parentSchema.Name, "incomplete polymorphic references")
-		}
-		desc.morphTypeColumn = rel.References[0].ForeignKey.DBName
-		desc.morphValue = rel.References[0].PrimaryValue
-		desc.morphIDColumn = rel.References[1].ForeignKey.DBName
-		desc.references = []referenceKey{
-			{
-				primaryTable:  parentTable,
-				primaryColumn: rel.References[1].PrimaryKey.DBName,
-				foreignTable:  related.Table,
-				foreignColumn: rel.References[1].ForeignKey.DBName,
-			},
-		}
-		if rel.Field.IndirectFieldType.Kind() == reflect.Slice {
-			desc.kind = relKindMorphMany
-		} else {
-			desc.kind = relKindMorphOne
-		}
-		return desc, nil
-
 	case rel.Type == gormschema.Many2Many && rel.JoinTable != nil:
 		desc.kind = relKindMany2Many
 		desc.pivotTable = rel.JoinTable.Table
@@ -270,6 +269,145 @@ func tableNameFor(db *gormio.DB, model any) (string, error) {
 	return stmt.Schema.Table, nil
 }
 
+// descriptorFromMorph resolves a polymorphic relation declared via the parent's MorphRelations()
+// method. Handles all five kinds: MorphOne, MorphMany, MorphTo, MorphToMany, MorphedByMany.
+// Returns OrmRelationNotFound (wrapped) when the parent doesn't implement the interface or the
+// relation name isn't in its map — letting the caller fall through to other resolvers.
+func descriptorFromMorph(db *gormio.DB, parent any, parentTable, name string) (*relationDescriptor, error) {
+	morphHolder, ok := unwrapPointer(parent).(contractsorm.ModelWithMorphRelations)
+	if !ok {
+		return nil, errors.OrmRelationNotFound.Args(name, reflect.TypeOf(parent).String())
+	}
+	mr, ok := morphHolder.MorphRelations()[name]
+	if !ok {
+		return nil, errors.OrmRelationNotFound.Args(name, reflect.TypeOf(parent).String())
+	}
+
+	switch mr.Kind {
+	case contractsorm.MorphOne, contractsorm.MorphMany:
+		return descriptorFromMorphOneOrMany(db, parent, parentTable, name, mr)
+	case contractsorm.MorphTo:
+		return descriptorFromMorphTo(parent, parentTable, name, mr)
+	case contractsorm.MorphToMany, contractsorm.MorphedByMany:
+		return descriptorFromMorphToMany(db, parent, parentTable, name, mr)
+	default:
+		return nil, errors.OrmMorphRelationKindUnknown.Args(name, reflect.TypeOf(parent).String(), string(mr.Kind))
+	}
+}
+
+// descriptorFromMorphOneOrMany handles outbound MorphOne / MorphMany. The morph value comes from
+// the parent (resolved via the morph map / MorphClass() method, falling back to the parent's
+// table name).
+func descriptorFromMorphOneOrMany(db *gormio.DB, parent any, parentTable, name string, mr contractsorm.MorphRelation) (*relationDescriptor, error) {
+	if mr.Related == nil {
+		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Related")
+	}
+	if mr.Name == "" {
+		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Name")
+	}
+	relatedTable, err := tableNameFor(db, mr.Related)
+	if err != nil {
+		return nil, err
+	}
+	typeColumn := defaultStr(mr.TypeColumn, mr.Name+"_type")
+	idColumn := defaultStr(mr.IDColumn, mr.Name+"_id")
+	localKey := defaultStr(mr.LocalKey, "id")
+
+	desc := &relationDescriptor{
+		parentTable:     parentTable,
+		relatedTable:    relatedTable,
+		relatedModel:    mr.Related,
+		morphTypeColumn: typeColumn,
+		morphIDColumn:   idColumn,
+		morphValue:      resolveMorphValue(parent, parentTable),
+		references: []referenceKey{{
+			primaryTable:  parentTable,
+			primaryColumn: localKey,
+			foreignTable:  relatedTable,
+			foreignColumn: idColumn,
+		}},
+	}
+	if mr.Kind == contractsorm.MorphMany {
+		desc.kind = relKindMorphMany
+	} else {
+		desc.kind = relKindMorphOne
+	}
+	return desc, nil
+}
+
+// descriptorFromMorphTo handles the inverse polymorphic relation. The parent is the side that
+// holds the morph_id + morph_type columns. The related model is determined per-row at load time
+// by consulting the morph map; the descriptor therefore carries no relatedTable / relatedModel.
+func descriptorFromMorphTo(parent any, parentTable, name string, mr contractsorm.MorphRelation) (*relationDescriptor, error) {
+	if mr.Name == "" {
+		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Name")
+	}
+	return &relationDescriptor{
+		kind:            relKindMorphTo,
+		parentTable:     parentTable,
+		morphTypeColumn: defaultStr(mr.TypeColumn, mr.Name+"_type"),
+		morphIDColumn:   defaultStr(mr.IDColumn, mr.Name+"_id"),
+		morphOwnerKey:   defaultStr(mr.OwnerKey, "id"),
+	}, nil
+}
+
+// descriptorFromMorphToMany handles MorphToMany and its inverse, MorphedByMany. The pivot table
+// carries `<Name>_id` + `<Name>_type` plus the parent's foreign key. For MorphToMany the
+// morph_type column pins on the parent's morph value; for MorphedByMany it pins on the related's
+// morph value.
+func descriptorFromMorphToMany(db *gormio.DB, parent any, parentTable, name string, mr contractsorm.MorphRelation) (*relationDescriptor, error) {
+	if mr.Related == nil {
+		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Related")
+	}
+	if mr.Name == "" {
+		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Name")
+	}
+	relatedTable, err := tableNameFor(db, mr.Related)
+	if err != nil {
+		return nil, err
+	}
+
+	pivotTable := defaultStr(mr.Table, str.Of(mr.Name).Plural().String())
+	morphTypeColumn := defaultStr(mr.TypeColumn, mr.Name+"_type")
+	morphIDColumn := defaultStr(mr.ForeignPivotKey, mr.Name+"_id")
+	relatedPivotKey := defaultStr(mr.RelatedPivotKey, str.Of(relatedTable).Singular().String()+"_id")
+	parentKey := defaultStr(mr.ParentKey, "id")
+	relatedKey := defaultStr(mr.RelatedKey, "id")
+
+	// In the forward direction (MorphToMany), the morph_type column on the pivot stores the
+	// parent's morph alias; in the inverse direction (MorphedByMany), it stores the related's.
+	var morphValue string
+	if mr.Kind == contractsorm.MorphedByMany {
+		morphValue = resolveMorphValue(mr.Related, relatedTable)
+	} else {
+		morphValue = resolveMorphValue(parent, parentTable)
+	}
+
+	return &relationDescriptor{
+		kind:            relKindMorphToMany,
+		parentTable:     parentTable,
+		relatedTable:    relatedTable,
+		relatedModel:    mr.Related,
+		pivotTable:      pivotTable,
+		morphTypeColumn: morphTypeColumn,
+		morphIDColumn:   morphIDColumn,
+		morphValue:      morphValue,
+		morphInverse:    mr.Kind == contractsorm.MorphedByMany,
+		pivotParentRef: referenceKey{
+			primaryTable:  parentTable,
+			primaryColumn: parentKey,
+			foreignTable:  pivotTable,
+			foreignColumn: morphIDColumn,
+		},
+		pivotRelatedRef: referenceKey{
+			primaryTable:  relatedTable,
+			primaryColumn: relatedKey,
+			foreignTable:  pivotTable,
+			foreignColumn: relatedPivotKey,
+		},
+	}, nil
+}
+
 // splitRelation splits "Books.Author" into ("Books", "Author"). A non-dotted name yields ("X", "").
 func splitRelation(relation string) (head, tail string) {
 	for i := 0; i < len(relation); i++ {
@@ -293,4 +431,15 @@ func defaultStr(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// resolveMorphValue picks the value to use for a polymorphic *_type column. The model-level
+// MorphClass() method takes precedence, then the global morph map (registered via orm.MorphMap),
+// then GORM's parsed PrimaryValue (which is either a `polymorphicValue:` tag or the parent's
+// table name).
+func resolveMorphValue(parent any, gormDefault string) string {
+	if v, ok := morphmap.MorphValue(parent); ok {
+		return v
+	}
+	return gormDefault
 }

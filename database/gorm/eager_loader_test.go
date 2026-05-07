@@ -199,6 +199,32 @@ func TestSetRelationField_UnknownField(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.OrmEagerLoadCannotAssign))
 }
 
+// withInterfaceRel exercises the MorphTo field shape: an `any` field that the loader fills with
+// a *RelatedModel value chosen at runtime via the morph map.
+type withInterfaceRel struct {
+	ID        uint
+	Imageable any
+}
+
+func TestSetRelationField_InterfaceAssignment(t *testing.T) {
+	parent := withInterfaceRel{}
+	rv := reflect.ValueOf(&parent).Elem()
+	row := reflect.ValueOf(&relBook{Title: "x"})
+	err := setRelationField(rv, "Imageable", []reflect.Value{row})
+	assert.NoError(t, err)
+	got, ok := parent.Imageable.(*relBook)
+	assert.True(t, ok)
+	assert.Equal(t, "x", got.Title)
+}
+
+func TestSetRelationField_InterfaceEmptyClearsField(t *testing.T) {
+	parent := withInterfaceRel{Imageable: &relBook{Title: "stale"}}
+	rv := reflect.ValueOf(&parent).Elem()
+	err := setRelationField(rv, "Imageable", nil)
+	assert.NoError(t, err)
+	assert.Nil(t, parent.Imageable)
+}
+
 // --- runEagerLoads no-op paths --------------------------------------------
 
 func TestRunEagerLoadsNoParents(t *testing.T) {
