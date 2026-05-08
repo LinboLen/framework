@@ -53,6 +53,14 @@ type relationDescriptor struct {
 	pivotTable      string
 	pivotParentRef  referenceKey
 	pivotRelatedRef referenceKey
+	// pivotColumns lists extra pivot columns to surface on eager-loaded models via the
+	// `Pivot orm.Pivot` field. Used by loadMany2Many / loadMorphToMany.
+	pivotColumns []string
+	// pivotTimestamps, when true, causes basePivotRow to stamp created_at / updated_at on every
+	// pivot INSERT and UpdateExistingPivotRelation to inject updated_at on UPDATE.
+	pivotTimestamps      bool
+	pivotCreatedAtColumn string // default "created_at"
+	pivotUpdatedAtColumn string // default "updated_at"
 
 	// polymorphic specifics
 	morphTypeColumn string // e.g. "imageable_type" — on parent table for MorphTo, on pivot for MorphToMany
@@ -295,6 +303,10 @@ func descriptorFromMany2Many(db *gormio.DB, parent any, parentTable, name string
 			foreignTable:  pivotTable,
 			foreignColumn: relatedPivotKey,
 		},
+		pivotColumns:         rel.PivotColumns,
+		pivotTimestamps:      rel.PivotTimestamps,
+		pivotCreatedAtColumn: defaultStr(rel.PivotCreatedAt, "created_at"),
+		pivotUpdatedAtColumn: defaultStr(rel.PivotUpdatedAt, "updated_at"),
 	}, nil
 }
 
@@ -350,6 +362,7 @@ func descriptorFromMorphToMany(db *gormio.DB, parent any, parentTable, name stri
 	return buildMorphPivotDescriptor(db, parent, parentTable, name,
 		rel.Related, rel.Name, rel.Table, rel.TypeColumn,
 		rel.ForeignPivotKey, rel.RelatedPivotKey, rel.ParentKey, rel.RelatedKey,
+		rel.PivotColumns, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
 		inverse,
 	)
 }
@@ -358,11 +371,12 @@ func descriptorFromMorphedByMany(db *gormio.DB, parent any, parentTable, name st
 	return buildMorphPivotDescriptor(db, parent, parentTable, name,
 		rel.Related, rel.Name, rel.Table, rel.TypeColumn,
 		rel.ForeignPivotKey, rel.RelatedPivotKey, rel.ParentKey, rel.RelatedKey,
+		rel.PivotColumns, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
 		true,
 	)
 }
 
-func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name string, related any, morphName, table, typeCol, foreignPivot, relatedPivot, parentKey, relatedKey string, inverse bool) (*relationDescriptor, error) {
+func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name string, related any, morphName, table, typeCol, foreignPivot, relatedPivot, parentKey, relatedKey string, pivotColumns []string, pivotTimestamps bool, pivotCreatedAt, pivotUpdatedAt string, inverse bool) (*relationDescriptor, error) {
 	if related == nil {
 		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Related")
 	}
@@ -408,6 +422,10 @@ func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name stri
 			foreignTable:  pivotTable,
 			foreignColumn: relatedPivotKey,
 		},
+		pivotColumns:         pivotColumns,
+		pivotTimestamps:      pivotTimestamps,
+		pivotCreatedAtColumn: defaultStr(pivotCreatedAt, "created_at"),
+		pivotUpdatedAtColumn: defaultStr(pivotUpdatedAt, "updated_at"),
 	}, nil
 }
 

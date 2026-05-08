@@ -406,10 +406,44 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 	pivotParentCol := desc.pivotParentRef.foreignColumn
 	pivotRelatedCol := desc.pivotRelatedRef.foreignColumn
 
+	// Check if the related model has a Pivot field — if yes, we'll SELECT extra pivot columns.
+	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
+	if err != nil {
+		return err
+	}
+	hasPivotField := false
+	relatedType := reflect.TypeOf(desc.relatedModel)
+	if relatedType.Kind() == reflect.Ptr {
+		relatedType = relatedType.Elem()
+	}
+	if relatedType.Kind() == reflect.Struct {
+		if _, ok := relatedType.FieldByName("Pivot"); ok {
+			hasPivotField = true
+		}
+	}
+
+	// Build the pivot SELECT list: always include the two FK columns, plus extra columns if the
+	// related model has a Pivot field and desc.pivotColumns or desc.pivotTimestamps is set.
+	pivotSelectCols := []string{pivotParentCol, pivotRelatedCol}
+	var extraPivotCols []string
+	if hasPivotField {
+		extraPivotCols = append(extraPivotCols, desc.pivotColumns...)
+		if desc.pivotTimestamps {
+			extraPivotCols = append(extraPivotCols, desc.pivotCreatedAtColumn, desc.pivotUpdatedAtColumn)
+		}
+		pivotSelectCols = append(pivotSelectCols, extraPivotCols...)
+	}
+
+	// Convert []string to []interface{} for GORM's Select signature.
+	selectArgs := make([]interface{}, len(pivotSelectCols))
+	for i, col := range pivotSelectCols {
+		selectArgs[i] = col
+	}
+
 	pivotRows, err := r.chunkedFindMaps(keys, func(chunk []any) *gormio.DB {
 		return r.freshSession().
 			Table(desc.pivotTable).
-			Select(pivotParentCol, pivotRelatedCol).
+			Select(selectArgs[0], selectArgs[1:]...).
 			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(pivotParentCol)), chunk)
 	})
 	if err != nil {
@@ -440,10 +474,6 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 		return err
 	}
 
-	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
-	if err != nil {
-		return err
-	}
 	relatedPKField, ok := relatedSchema.FieldsByDBName[desc.pivotRelatedRef.primaryColumn]
 	if !ok {
 		return errors.OrmRelationUnsupported.Args(entry.relation, relatedSchema.Name, "no related PK field for "+desc.pivotRelatedRef.primaryColumn)
@@ -452,6 +482,22 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 	for _, row := range rows {
 		val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
 		relatedByID[dictKey(val)] = row
+	}
+
+	// Build pivot data map: key = relatedID, value = map of extra pivot columns.
+	var pivotDataByRelatedID map[string]map[string]any
+	if hasPivotField && len(extraPivotCols) > 0 {
+		pivotDataByRelatedID = make(map[string]map[string]any, len(pivotRows))
+		for _, p := range pivotRows {
+			relatedKey := dictKey(p[pivotRelatedCol])
+			data := make(map[string]any, len(extraPivotCols))
+			for _, col := range extraPivotCols {
+				if val, ok := p[col]; ok {
+					data[col] = val
+				}
+			}
+			pivotDataByRelatedID[relatedKey] = data
+		}
 	}
 
 	dict := make(map[string][]reflect.Value, len(parents))
@@ -466,6 +512,18 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 	if err := r.assignToParents(parents, parentField, entry.relation, dict, true); err != nil {
 		return err
 	}
+
+	// Hydrate Pivot field on each related row if we have pivot data.
+	if hasPivotField && len(pivotDataByRelatedID) > 0 {
+		for _, row := range rows {
+			val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
+			relatedKey := dictKey(val)
+			if data, ok := pivotDataByRelatedID[relatedKey]; ok {
+				writePivotField(row, data)
+			}
+		}
+	}
+
 	return r.recurseNested(rows, nested)
 }
 
@@ -491,10 +549,44 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 	pivotParentCol := desc.pivotParentRef.foreignColumn
 	pivotRelatedCol := desc.pivotRelatedRef.foreignColumn
 
+	// Check if the related model has a Pivot field — if yes, we'll SELECT extra pivot columns.
+	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
+	if err != nil {
+		return err
+	}
+	hasPivotField := false
+	relatedType := reflect.TypeOf(desc.relatedModel)
+	if relatedType.Kind() == reflect.Ptr {
+		relatedType = relatedType.Elem()
+	}
+	if relatedType.Kind() == reflect.Struct {
+		if _, ok := relatedType.FieldByName("Pivot"); ok {
+			hasPivotField = true
+		}
+	}
+
+	// Build the pivot SELECT list: always include the two FK columns, plus extra columns if the
+	// related model has a Pivot field and desc.pivotColumns or desc.pivotTimestamps is set.
+	pivotSelectCols := []string{pivotParentCol, pivotRelatedCol}
+	var extraPivotCols []string
+	if hasPivotField {
+		extraPivotCols = append(extraPivotCols, desc.pivotColumns...)
+		if desc.pivotTimestamps {
+			extraPivotCols = append(extraPivotCols, desc.pivotCreatedAtColumn, desc.pivotUpdatedAtColumn)
+		}
+		pivotSelectCols = append(pivotSelectCols, extraPivotCols...)
+	}
+
+	// Convert []string to []interface{} for GORM's Select signature.
+	selectArgs := make([]interface{}, len(pivotSelectCols))
+	for i, col := range pivotSelectCols {
+		selectArgs[i] = col
+	}
+
 	pivotRows, err := r.chunkedFindMaps(keys, func(chunk []any) *gormio.DB {
 		return r.freshSession().
 			Table(desc.pivotTable).
-			Select(pivotParentCol, pivotRelatedCol).
+			Select(selectArgs[0], selectArgs[1:]...).
 			Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(pivotParentCol)), chunk).
 			Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	})
@@ -526,10 +618,6 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 		return err
 	}
 
-	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
-	if err != nil {
-		return err
-	}
 	relatedPKField, ok := relatedSchema.FieldsByDBName[desc.pivotRelatedRef.primaryColumn]
 	if !ok {
 		return errors.OrmRelationUnsupported.Args(entry.relation, relatedSchema.Name, "no related PK field for "+desc.pivotRelatedRef.primaryColumn)
@@ -538,6 +626,22 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 	for _, row := range rows {
 		val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
 		relatedByID[dictKey(val)] = row
+	}
+
+	// Build pivot data map: key = relatedID, value = map of extra pivot columns.
+	var pivotDataByRelatedID map[string]map[string]any
+	if hasPivotField && len(extraPivotCols) > 0 {
+		pivotDataByRelatedID = make(map[string]map[string]any, len(pivotRows))
+		for _, p := range pivotRows {
+			relatedKey := dictKey(p[pivotRelatedCol])
+			data := make(map[string]any, len(extraPivotCols))
+			for _, col := range extraPivotCols {
+				if val, ok := p[col]; ok {
+					data[col] = val
+				}
+			}
+			pivotDataByRelatedID[relatedKey] = data
+		}
 	}
 
 	dict := make(map[string][]reflect.Value, len(parents))
@@ -552,6 +656,18 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 	if err := r.assignToParents(parents, parentField, entry.relation, dict, true); err != nil {
 		return err
 	}
+
+	// Hydrate Pivot field on each related row if we have pivot data.
+	if hasPivotField && len(pivotDataByRelatedID) > 0 {
+		for _, row := range rows {
+			val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
+			relatedKey := dictKey(val)
+			if data, ok := pivotDataByRelatedID[relatedKey]; ok {
+				writePivotField(row, data)
+			}
+		}
+	}
+
 	return r.recurseNested(rows, nested)
 }
 
@@ -987,4 +1103,37 @@ func setRelationField(parent reflect.Value, fieldName string, rows []reflect.Val
 		return nil
 	}
 	return errors.OrmEagerLoadCannotAssign.Args(fieldName, parent.Type().String())
+}
+
+// writePivotField checks if rv (a related model instance) has an exported field named "Pivot" of
+// type orm.Pivot (map[string]any), and if so writes data into it. Returns true if the field exists
+// and was written, false otherwise. Used by loadMany2Many / loadMorphToMany to hydrate pivot column
+// values onto eager-loaded models.
+func writePivotField(rv reflect.Value, data map[string]any) bool {
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	field := rv.FieldByName("Pivot")
+	if !field.IsValid() || !field.CanSet() {
+		return false
+	}
+	// Check type: must be map[string]any (the orm.Pivot alias).
+	if field.Kind() != reflect.Map || field.Type().Key().Kind() != reflect.String {
+		return false
+	}
+	if field.Type().Elem().Kind() != reflect.Interface {
+		return false
+	}
+	// Initialize if nil.
+	if field.IsNil() {
+		field.Set(reflect.MakeMap(field.Type()))
+	}
+	// Copy data into the map.
+	for k, v := range data {
+		field.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+	}
+	return true
 }

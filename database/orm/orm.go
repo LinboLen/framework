@@ -171,6 +171,80 @@ func (r *Orm) SaveMany(parent any, relation string, children any) error {
 	return gq.SaveManyRelation(parent, relation, children)
 }
 
+// SaveWithPivot is Save with caller-supplied pivot column values for BelongsToMany relations.
+// See contractsorm.Orm.SaveWithPivot.
+func (r *Orm) SaveWithPivot(parent any, relation string, child any, attrs map[string]any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.SaveRelationWithPivot(parent, relation, child, attrs)
+}
+
+// SaveManyWithPivot is the slice form of SaveWithPivot. See contractsorm.Orm.SaveManyWithPivot.
+func (r *Orm) SaveManyWithPivot(parent any, relation string, children any, attrsPerChild map[any]map[string]any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.SaveManyRelationWithPivot(parent, relation, children, attrsPerChild)
+}
+
+// Create persists a new related row. See contractsorm.Orm.Create.
+func (r *Orm) Create(parent any, relation string, dest any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.CreateRelation(parent, relation, dest)
+}
+
+// CreateMany is the slice form of Create. See contractsorm.Orm.CreateMany.
+func (r *Orm) CreateMany(parent any, relation string, dests any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.CreateManyRelation(parent, relation, dests)
+}
+
+// FindOrNew finds the related row with primary key id. See contractsorm.Orm.FindOrNew.
+func (r *Orm) FindOrNew(parent any, relation string, id any, dest any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.FindOrNewRelation(parent, relation, id, dest)
+}
+
+// FirstOrNew finds the first related row matching attrs. See contractsorm.Orm.FirstOrNew.
+func (r *Orm) FirstOrNew(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.FirstOrNewRelation(parent, relation, attrs, values, dest)
+}
+
+// FirstOrCreate is FirstOrNew that persists when no matching row exists. See contractsorm.Orm.FirstOrCreate.
+func (r *Orm) FirstOrCreate(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.FirstOrCreateRelation(parent, relation, attrs, values, dest)
+}
+
+// UpdateOrCreate finds the first related row matching attrs (or creates one), then overlays values.
+// See contractsorm.Orm.UpdateOrCreate.
+func (r *Orm) UpdateOrCreate(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.UpdateOrCreateRelation(parent, relation, attrs, values, dest)
+}
+
 // Associate sets parent's foreign key (and morph_type for MorphTo) to point at owner.
 // See contractsorm.Orm.Associate.
 func (r *Orm) Associate(parent any, relation string, owner any) error {

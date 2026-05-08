@@ -3,6 +3,7 @@ package gorm
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	dbcontract "github.com/goravel/framework/contracts/database/db"
 	"github.com/goravel/framework/errors"
@@ -10,13 +11,14 @@ import (
 
 // SaveRelation inserts or updates child as a member of parent's relation. Sets child's foreign
 // key (and morph_type for MorphOne/MorphMany) from parent's local key, then persists child via
-// Query.Save.
+// Query.Save. For BelongsToMany kinds (Many2Many, MorphToMany, MorphedByMany) persists child first,
+// then writes a pivot row linking parent and child.
 //
 // Public Query-level helper used by Orm.Save. Named "SaveRelation" to avoid clashing with the
 // existing single-arg Query.Save(value any) which persists a model directly.
 //
-// Supported kinds: HasOne, HasMany, MorphOne, MorphMany. Other kinds error with
-// OrmRelationKindNotSupported.
+// Supported kinds: HasOne, HasMany, MorphOne, MorphMany, Many2Many, MorphToMany, MorphedByMany.
+// Other kinds error with OrmRelationKindNotSupported.
 func (r *Query) SaveRelation(parent any, relation string, child any) error {
 	if !isValidParent(parent) {
 		return errors.OrmNewRelationParentNotPointer.Args(parent)
@@ -34,6 +36,16 @@ func (r *Query) SaveRelation(parent any, relation string, child any) error {
 			return err
 		}
 		return r.wrap(r.freshSession()).Save(child)
+	case relKindMany2Many, relKindMorphToMany:
+		// Persist child first, then attach via pivot.
+		if err := r.wrap(r.freshSession()).Save(child); err != nil {
+			return err
+		}
+		childPK, err := readParentColumn(r, child, desc.pivotRelatedRef.primaryColumn)
+		if err != nil {
+			return err
+		}
+		return r.AttachRelation(parent, relation, []any{childPK})
 	default:
 		return errors.OrmRelationKindNotSupported.Args("Save", relation, kindName(desc.kind))
 	}
@@ -67,6 +79,82 @@ func (r *Query) SaveManyRelation(parent any, relation string, children any) erro
 			return errors.OrmRelationKindNotSupported.Args("SaveMany", relation, fmt.Sprintf("children element=%s", item.Kind()))
 		}
 		if err := r.SaveRelation(parent, relation, elem); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SaveRelationWithPivot is SaveRelation with caller-supplied pivot column values for the
+// BelongsToMany family. On HasOneOrMany kinds attrs is ignored (no pivot row).
+func (r *Query) SaveRelationWithPivot(parent any, relation string, child any, attrs map[string]any) error {
+	if !isValidParent(parent) {
+		return errors.OrmNewRelationParentNotPointer.Args(parent)
+	}
+	if !isValidParent(child) {
+		return errors.OrmNewRelationParentNotPointer.Args(child)
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	switch desc.kind {
+	case relKindHasOne, relKindHasMany, relKindMorphOne, relKindMorphMany:
+		// No pivot — just delegate to SaveRelation.
+		return r.SaveRelation(parent, relation, child)
+	case relKindMany2Many, relKindMorphToMany:
+		// Persist child first, then attach via pivot with attrs.
+		if err := r.wrap(r.freshSession()).Save(child); err != nil {
+			return err
+		}
+		childPK, err := readParentColumn(r, child, desc.pivotRelatedRef.primaryColumn)
+		if err != nil {
+			return err
+		}
+		return r.AttachWithPivotRelation(parent, relation, map[any]map[string]any{childPK: attrs})
+	default:
+		return errors.OrmRelationKindNotSupported.Args("SaveWithPivot", relation, kindName(desc.kind))
+	}
+}
+
+// SaveManyRelationWithPivot is the slice form of SaveRelationWithPivot. attrsPerChild is keyed by
+// the related PK of each child; an entry may be nil to attach without extra columns.
+func (r *Query) SaveManyRelationWithPivot(parent any, relation string, children any, attrsPerChild map[any]map[string]any) error {
+	rv := reflect.ValueOf(children)
+	if rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Slice {
+		return errors.OrmRelationKindNotSupported.Args("SaveManyWithPivot", relation, fmt.Sprintf("children=%T (must be slice)", children))
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < rv.Len(); i++ {
+		item := rv.Index(i)
+		var elem any
+		switch item.Kind() {
+		case reflect.Pointer:
+			elem = item.Interface()
+		case reflect.Struct:
+			if !item.CanAddr() {
+				ptr := reflect.New(item.Type())
+				ptr.Elem().Set(item)
+				elem = ptr.Interface()
+			} else {
+				elem = item.Addr().Interface()
+			}
+		default:
+			return errors.OrmRelationKindNotSupported.Args("SaveManyWithPivot", relation, fmt.Sprintf("children element=%s", item.Kind()))
+		}
+		// Read child's PK to look up attrs.
+		childPK, err := readParentColumn(r, elem, desc.pivotRelatedRef.primaryColumn)
+		if err != nil {
+			return err
+		}
+		attrs := attrsPerChild[childPK]
+		if err := r.SaveRelationWithPivot(parent, relation, elem, attrs); err != nil {
 			return err
 		}
 	}
@@ -233,6 +321,283 @@ func (r *Query) mutateDissociate(parent any, desc *relationDescriptor, isMorph b
 	return nil
 }
 
+// CreateRelation persists a new related row. For HasOneOrMany kinds (HasOne, HasMany, MorphOne,
+// MorphMany) the framework first sets the FK (and morph type column) on dest from parent, then
+// inserts. dest must be a non-nil pointer to a struct of the related type.
+//
+// Public Query-level helper used by Orm.Create.
+func (r *Query) CreateRelation(parent any, relation string, dest any) error {
+	if !isValidParent(parent) {
+		return errors.OrmNewRelationParentNotPointer.Args(parent)
+	}
+	if !isValidParent(dest) {
+		return errors.OrmNewRelationParentNotPointer.Args(dest)
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	switch desc.kind {
+	case relKindHasOne, relKindHasMany, relKindMorphOne, relKindMorphMany:
+		if err := r.setRelationFKOnChild(parent, dest, desc); err != nil {
+			return err
+		}
+		return r.wrap(r.freshSession()).Create(dest)
+	case relKindMany2Many, relKindMorphToMany:
+		// Create dest first, then attach via pivot.
+		if err := r.wrap(r.freshSession()).Create(dest); err != nil {
+			return err
+		}
+		childPK, err := readParentColumn(r, dest, desc.pivotRelatedRef.primaryColumn)
+		if err != nil {
+			return err
+		}
+		return r.AttachRelation(parent, relation, []any{childPK})
+	default:
+		return errors.OrmRelationKindNotSupported.Args("Create", relation, kindName(desc.kind))
+	}
+}
+
+// CreateManyRelation is the slice form of CreateRelation. dests must be a slice or a pointer to a
+// slice; iterates and calls CreateRelation per element, bailing on the first error.
+func (r *Query) CreateManyRelation(parent any, relation string, dests any) error {
+	rv := reflect.ValueOf(dests)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Slice {
+		return errors.OrmRelationUnsupported.Args(relation, fmt.Sprintf("%T", parent), "CreateMany requires a slice")
+	}
+	for i := 0; i < rv.Len(); i++ {
+		elem := rv.Index(i)
+		if elem.Kind() != reflect.Ptr {
+			elem = elem.Addr()
+		}
+		if err := r.CreateRelation(parent, relation, elem.Interface()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FindOrNewRelation finds the related row with primary key id. If absent, fills dest with a new
+// instance of the related model and pre-sets the FK (and morph type) — but does NOT persist.
+// dest must be a pointer to a struct.
+func (r *Query) FindOrNewRelation(parent any, relation string, id any, dest any) error {
+	if !isValidParent(parent) {
+		return errors.OrmNewRelationParentNotPointer.Args(parent)
+	}
+	if !isValidParent(dest) {
+		return errors.OrmNewRelationParentNotPointer.Args(dest)
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	switch desc.kind {
+	case relKindHasOne, relKindHasMany, relKindMorphOne, relKindMorphMany:
+		q := r.newRelationQuery(parent, relation)
+		if err := q.Find(dest, id); err != nil {
+			return err
+		}
+		// Check if Find actually populated dest by inspecting the PK field.
+		schema, err := parseGormSchema(r.instance, dest)
+		if err != nil {
+			return err
+		}
+		if len(schema.PrimaryFields) == 0 {
+			return errors.OrmRelationUnsupported.Args(relation, schema.Name, "no primary key")
+		}
+		pkField := schema.PrimaryFields[0]
+		rv := reflect.ValueOf(dest).Elem()
+		pkVal, isZero := pkField.ValueOf(r.ctx, rv)
+		_ = pkVal
+		if isZero {
+			// Not found — set FK on the zero-valued dest.
+			return r.setRelationFKOnChild(parent, dest, desc)
+		}
+		return nil
+	default:
+		return errors.OrmRelationKindNotSupported.Args("FindOrNew", relation, kindName(desc.kind))
+	}
+}
+
+// FirstOrNewRelation finds the first related row matching attrs. If absent, fills dest with a new
+// instance carrying attrs+values and pre-set FK — does NOT persist.
+func (r *Query) FirstOrNewRelation(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error {
+	if !isValidParent(parent) {
+		return errors.OrmNewRelationParentNotPointer.Args(parent)
+	}
+	if !isValidParent(dest) {
+		return errors.OrmNewRelationParentNotPointer.Args(dest)
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	switch desc.kind {
+	case relKindHasOne, relKindHasMany, relKindMorphOne, relKindMorphMany:
+		q := r.newRelationQuery(parent, relation)
+		for col, val := range attrs {
+			q = q.Where(col, val)
+		}
+		if err := q.First(dest); err != nil {
+			// Not found — overlay attrs+values and set FK.
+			if err := r.applyAttrMap(dest, attrs); err != nil {
+				return err
+			}
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+			return r.setRelationFKOnChild(parent, dest, desc)
+		}
+		return nil
+	default:
+		return errors.OrmRelationKindNotSupported.Args("FirstOrNew", relation, kindName(desc.kind))
+	}
+}
+
+// FirstOrCreateRelation is FirstOrNewRelation that persists when no matching row exists.
+func (r *Query) FirstOrCreateRelation(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error {
+	if !isValidParent(parent) {
+		return errors.OrmNewRelationParentNotPointer.Args(parent)
+	}
+	if !isValidParent(dest) {
+		return errors.OrmNewRelationParentNotPointer.Args(dest)
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	switch desc.kind {
+	case relKindHasOne, relKindHasMany, relKindMorphOne, relKindMorphMany:
+		q := r.newRelationQuery(parent, relation)
+		for col, val := range attrs {
+			q = q.Where(col, val)
+		}
+		if err := q.First(dest); err != nil {
+			// Not found — overlay attrs+values, set FK, persist.
+			if err := r.applyAttrMap(dest, attrs); err != nil {
+				return err
+			}
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+			if err := r.setRelationFKOnChild(parent, dest, desc); err != nil {
+				return err
+			}
+			return r.wrap(r.freshSession()).Create(dest)
+		}
+		return nil
+	case relKindMany2Many, relKindMorphToMany:
+		// For m2m: search the related table directly (no FK constraint), create+attach if missing.
+		q := r.freshSession().Model(desc.relatedModel)
+		for col, val := range attrs {
+			q = q.Where(col, val)
+		}
+		if err := r.wrap(q).First(dest); err != nil {
+			// Not found — overlay attrs+values, create, attach.
+			if err := r.applyAttrMap(dest, attrs); err != nil {
+				return err
+			}
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+			if err := r.wrap(r.freshSession()).Create(dest); err != nil {
+				return err
+			}
+			childPK, err := readParentColumn(r, dest, desc.pivotRelatedRef.primaryColumn)
+			if err != nil {
+				return err
+			}
+			return r.AttachRelation(parent, relation, []any{childPK})
+		}
+		return nil
+	default:
+		return errors.OrmRelationKindNotSupported.Args("FirstOrCreate", relation, kindName(desc.kind))
+	}
+}
+
+// UpdateOrCreateRelation finds the first related row matching attrs (or creates one), then overlays
+// values onto it and persists. Always saves dest.
+func (r *Query) UpdateOrCreateRelation(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error {
+	if !isValidParent(parent) {
+		return errors.OrmNewRelationParentNotPointer.Args(parent)
+	}
+	if !isValidParent(dest) {
+		return errors.OrmNewRelationParentNotPointer.Args(dest)
+	}
+	desc, err := resolveRelation(r.instance, parent, relation)
+	if err != nil {
+		return err
+	}
+	switch desc.kind {
+	case relKindHasOne, relKindHasMany, relKindMorphOne, relKindMorphMany:
+		// FirstOrNew logic.
+		q := r.newRelationQuery(parent, relation)
+		for col, val := range attrs {
+			q = q.Where(col, val)
+		}
+		if err := q.First(dest); err != nil {
+			// Not found — overlay attrs+values and set FK.
+			if err := r.applyAttrMap(dest, attrs); err != nil {
+				return err
+			}
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+			if err := r.setRelationFKOnChild(parent, dest, desc); err != nil {
+				return err
+			}
+		} else {
+			// Found — overlay values only.
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+		}
+		return r.wrap(r.freshSession()).Save(dest)
+	case relKindMany2Many, relKindMorphToMany:
+		// For m2m: search the related table directly, create+attach if missing, otherwise update.
+		q := r.freshSession().Model(desc.relatedModel)
+		for col, val := range attrs {
+			q = q.Where(col, val)
+		}
+		var freshlyCreated bool
+		if err := r.wrap(q).First(dest); err != nil {
+			// Not found — overlay attrs+values, create.
+			if err := r.applyAttrMap(dest, attrs); err != nil {
+				return err
+			}
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+			if err := r.wrap(r.freshSession()).Create(dest); err != nil {
+				return err
+			}
+			freshlyCreated = true
+		} else {
+			// Found — overlay values only.
+			if err := r.applyAttrMap(dest, values); err != nil {
+				return err
+			}
+			if err := r.wrap(r.freshSession()).Save(dest); err != nil {
+				return err
+			}
+		}
+		// Attach if freshly created.
+		if freshlyCreated {
+			childPK, err := readParentColumn(r, dest, desc.pivotRelatedRef.primaryColumn)
+			if err != nil {
+				return err
+			}
+			return r.AttachRelation(parent, relation, []any{childPK})
+		}
+		return nil
+	default:
+		return errors.OrmRelationKindNotSupported.Args("UpdateOrCreate", relation, kindName(desc.kind))
+	}
+}
+
 // AttachRelation inserts pivot rows linking parent to each id in ids. Skips ids that already
 // have a pivot row. Supported kinds: Many2Many, MorphToMany, MorphedByMany.
 //
@@ -334,8 +699,9 @@ func (r *Query) resolvePivot(parent any, relation, op string) (*relationDescript
 }
 
 // basePivotRow builds the column map for one pivot INSERT row. Always includes the parent FK and
-// the related FK; for MorphToMany also includes the morph_type column. Caller-supplied attrs are
-// merged on top — the caller wins on column-name conflicts.
+// the related FK; for MorphToMany also includes the morph_type column. When pivotTimestamps is
+// enabled stamps created_at and updated_at with time.Now(). Caller-supplied attrs are merged on
+// top — the caller wins on column-name conflicts.
 func (r *Query) basePivotRow(desc *relationDescriptor, parentVal, relatedID any, attrs map[string]any) map[string]any {
 	row := map[string]any{
 		desc.pivotParentRef.foreignColumn:  parentVal,
@@ -343,6 +709,11 @@ func (r *Query) basePivotRow(desc *relationDescriptor, parentVal, relatedID any,
 	}
 	if desc.kind == relKindMorphToMany {
 		row[desc.morphTypeColumn] = desc.morphValue
+	}
+	if desc.pivotTimestamps {
+		now := time.Now()
+		row[desc.pivotCreatedAtColumn] = now
+		row[desc.pivotUpdatedAtColumn] = now
 	}
 	for k, v := range attrs {
 		row[k] = v
@@ -489,15 +860,25 @@ func (r *Query) syncCore(parent any, relation string, ids []any, detachMissing b
 	return out, nil
 }
 
-// UpdateExistingPivotRelation updates pivot columns for an already-attached id. No-op (returns
-// 0) if no matching pivot row exists.
+// UpdateExistingPivotRelation updates pivot columns for an already-attached id. When
+// pivotTimestamps is enabled and attrs doesn't already set updated_at, injects time.Now() into
+// the update map. No-op (returns 0) if no matching pivot row exists.
 func (r *Query) UpdateExistingPivotRelation(parent any, relation string, id any, attrs map[string]any) (int64, error) {
 	desc, parentVal, err := r.resolvePivot(parent, relation, "UpdateExistingPivot")
 	if err != nil {
 		return 0, err
 	}
-	if len(attrs) == 0 {
+	if len(attrs) == 0 && !desc.pivotTimestamps {
 		return 0, nil
+	}
+	updateMap := make(map[string]any, len(attrs)+1)
+	for k, v := range attrs {
+		updateMap[k] = v
+	}
+	if desc.pivotTimestamps {
+		if _, hasUpdatedAt := updateMap[desc.pivotUpdatedAtColumn]; !hasUpdatedAt {
+			updateMap[desc.pivotUpdatedAtColumn] = time.Now()
+		}
 	}
 	q := r.freshSession().Table(desc.pivotTable).
 		Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.pivotParentRef.foreignColumn)), parentVal).
@@ -505,7 +886,7 @@ func (r *Query) UpdateExistingPivotRelation(parent any, relation string, id any,
 	if desc.kind == relKindMorphToMany {
 		q = q.Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	}
-	res := q.Updates(attrs)
+	res := q.Updates(updateMap)
 	return res.RowsAffected, res.Error
 }
 
@@ -539,6 +920,29 @@ func (r *Query) setRelationFKOnChild(parent, child any, desc *relationDescriptor
 			return errors.OrmRelationUnsupported.Args(desc.name, childSchema.Name, "no morph type field "+desc.morphTypeColumn)
 		}
 		if err := typeField.Set(r.ctx, rv, desc.morphValue); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyAttrMap overlays attrs onto dest using GORM's parsed schema to map column names to struct
+// fields. dest must be a pointer to a struct. Skips columns that don't map to a field.
+func (r *Query) applyAttrMap(dest any, attrs map[string]any) error {
+	if len(attrs) == 0 {
+		return nil
+	}
+	schema, err := parseGormSchema(r.instance, dest)
+	if err != nil {
+		return err
+	}
+	rv := reflect.ValueOf(dest).Elem()
+	for col, val := range attrs {
+		field, ok := schema.FieldsByDBName[col]
+		if !ok {
+			continue
+		}
+		if err := field.Set(r.ctx, rv, val); err != nil {
 			return err
 		}
 	}

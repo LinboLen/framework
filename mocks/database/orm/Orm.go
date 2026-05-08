@@ -265,6 +265,102 @@ func (_c *Orm_Connection_Call) RunAndReturn(run func(string) orm.Orm) *Orm_Conne
 	return _c
 }
 
+// Create provides a mock function with given fields: parent, relation, dest
+func (_m *Orm) Create(parent interface{}, relation string, dest interface{}) error {
+	ret := _m.Called(parent, relation, dest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Create")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}) error); ok {
+		r0 = rf(parent, relation, dest)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_Create_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Create'
+type Orm_Create_Call struct {
+	*mock.Call
+}
+
+// Create is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - dest interface{}
+func (_e *Orm_Expecter) Create(parent interface{}, relation interface{}, dest interface{}) *Orm_Create_Call {
+	return &Orm_Create_Call{Call: _e.mock.On("Create", parent, relation, dest)}
+}
+
+func (_c *Orm_Create_Call) Run(run func(parent interface{}, relation string, dest interface{})) *Orm_Create_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_Create_Call) Return(_a0 error) *Orm_Create_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_Create_Call) RunAndReturn(run func(interface{}, string, interface{}) error) *Orm_Create_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// CreateMany provides a mock function with given fields: parent, relation, dests
+func (_m *Orm) CreateMany(parent interface{}, relation string, dests interface{}) error {
+	ret := _m.Called(parent, relation, dests)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateMany")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}) error); ok {
+		r0 = rf(parent, relation, dests)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_CreateMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateMany'
+type Orm_CreateMany_Call struct {
+	*mock.Call
+}
+
+// CreateMany is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - dests interface{}
+func (_e *Orm_Expecter) CreateMany(parent interface{}, relation interface{}, dests interface{}) *Orm_CreateMany_Call {
+	return &Orm_CreateMany_Call{Call: _e.mock.On("CreateMany", parent, relation, dests)}
+}
+
+func (_c *Orm_CreateMany_Call) Run(run func(parent interface{}, relation string, dests interface{})) *Orm_CreateMany_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_CreateMany_Call) Return(_a0 error) *Orm_CreateMany_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_CreateMany_Call) RunAndReturn(run func(interface{}, string, interface{}) error) *Orm_CreateMany_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // DB provides a mock function with no fields
 func (_m *Orm) DB() (*sql.DB, error) {
 	ret := _m.Called()
@@ -525,6 +621,155 @@ func (_c *Orm_Factory_Call) Return(_a0 orm.Factory) *Orm_Factory_Call {
 }
 
 func (_c *Orm_Factory_Call) RunAndReturn(run func() orm.Factory) *Orm_Factory_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FindOrNew provides a mock function with given fields: parent, relation, id, dest
+func (_m *Orm) FindOrNew(parent interface{}, relation string, id interface{}, dest interface{}) error {
+	ret := _m.Called(parent, relation, id, dest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindOrNew")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}, interface{}) error); ok {
+		r0 = rf(parent, relation, id, dest)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_FindOrNew_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindOrNew'
+type Orm_FindOrNew_Call struct {
+	*mock.Call
+}
+
+// FindOrNew is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - id interface{}
+//   - dest interface{}
+func (_e *Orm_Expecter) FindOrNew(parent interface{}, relation interface{}, id interface{}, dest interface{}) *Orm_FindOrNew_Call {
+	return &Orm_FindOrNew_Call{Call: _e.mock.On("FindOrNew", parent, relation, id, dest)}
+}
+
+func (_c *Orm_FindOrNew_Call) Run(run func(parent interface{}, relation string, id interface{}, dest interface{})) *Orm_FindOrNew_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}), args[3].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_FindOrNew_Call) Return(_a0 error) *Orm_FindOrNew_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_FindOrNew_Call) RunAndReturn(run func(interface{}, string, interface{}, interface{}) error) *Orm_FindOrNew_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FirstOrCreate provides a mock function with given fields: parent, relation, attrs, values, dest
+func (_m *Orm) FirstOrCreate(parent interface{}, relation string, attrs map[string]interface{}, values map[string]interface{}, dest interface{}) error {
+	ret := _m.Called(parent, relation, attrs, values, dest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FirstOrCreate")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[string]interface{}, map[string]interface{}, interface{}) error); ok {
+		r0 = rf(parent, relation, attrs, values, dest)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_FirstOrCreate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FirstOrCreate'
+type Orm_FirstOrCreate_Call struct {
+	*mock.Call
+}
+
+// FirstOrCreate is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - attrs map[string]interface{}
+//   - values map[string]interface{}
+//   - dest interface{}
+func (_e *Orm_Expecter) FirstOrCreate(parent interface{}, relation interface{}, attrs interface{}, values interface{}, dest interface{}) *Orm_FirstOrCreate_Call {
+	return &Orm_FirstOrCreate_Call{Call: _e.mock.On("FirstOrCreate", parent, relation, attrs, values, dest)}
+}
+
+func (_c *Orm_FirstOrCreate_Call) Run(run func(parent interface{}, relation string, attrs map[string]interface{}, values map[string]interface{}, dest interface{})) *Orm_FirstOrCreate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[string]interface{}), args[3].(map[string]interface{}), args[4].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_FirstOrCreate_Call) Return(_a0 error) *Orm_FirstOrCreate_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_FirstOrCreate_Call) RunAndReturn(run func(interface{}, string, map[string]interface{}, map[string]interface{}, interface{}) error) *Orm_FirstOrCreate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FirstOrNew provides a mock function with given fields: parent, relation, attrs, values, dest
+func (_m *Orm) FirstOrNew(parent interface{}, relation string, attrs map[string]interface{}, values map[string]interface{}, dest interface{}) error {
+	ret := _m.Called(parent, relation, attrs, values, dest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FirstOrNew")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[string]interface{}, map[string]interface{}, interface{}) error); ok {
+		r0 = rf(parent, relation, attrs, values, dest)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_FirstOrNew_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FirstOrNew'
+type Orm_FirstOrNew_Call struct {
+	*mock.Call
+}
+
+// FirstOrNew is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - attrs map[string]interface{}
+//   - values map[string]interface{}
+//   - dest interface{}
+func (_e *Orm_Expecter) FirstOrNew(parent interface{}, relation interface{}, attrs interface{}, values interface{}, dest interface{}) *Orm_FirstOrNew_Call {
+	return &Orm_FirstOrNew_Call{Call: _e.mock.On("FirstOrNew", parent, relation, attrs, values, dest)}
+}
+
+func (_c *Orm_FirstOrNew_Call) Run(run func(parent interface{}, relation string, attrs map[string]interface{}, values map[string]interface{}, dest interface{})) *Orm_FirstOrNew_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[string]interface{}), args[3].(map[string]interface{}), args[4].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_FirstOrNew_Call) Return(_a0 error) *Orm_FirstOrNew_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_FirstOrNew_Call) RunAndReturn(run func(interface{}, string, map[string]interface{}, map[string]interface{}, interface{}) error) *Orm_FirstOrNew_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -828,6 +1073,104 @@ func (_c *Orm_SaveMany_Call) Return(_a0 error) *Orm_SaveMany_Call {
 }
 
 func (_c *Orm_SaveMany_Call) RunAndReturn(run func(interface{}, string, interface{}) error) *Orm_SaveMany_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SaveManyWithPivot provides a mock function with given fields: parent, relation, children, attrsPerChild
+func (_m *Orm) SaveManyWithPivot(parent interface{}, relation string, children interface{}, attrsPerChild map[interface{}]map[string]interface{}) error {
+	ret := _m.Called(parent, relation, children, attrsPerChild)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveManyWithPivot")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}, map[interface{}]map[string]interface{}) error); ok {
+		r0 = rf(parent, relation, children, attrsPerChild)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_SaveManyWithPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveManyWithPivot'
+type Orm_SaveManyWithPivot_Call struct {
+	*mock.Call
+}
+
+// SaveManyWithPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - children interface{}
+//   - attrsPerChild map[interface{}]map[string]interface{}
+func (_e *Orm_Expecter) SaveManyWithPivot(parent interface{}, relation interface{}, children interface{}, attrsPerChild interface{}) *Orm_SaveManyWithPivot_Call {
+	return &Orm_SaveManyWithPivot_Call{Call: _e.mock.On("SaveManyWithPivot", parent, relation, children, attrsPerChild)}
+}
+
+func (_c *Orm_SaveManyWithPivot_Call) Run(run func(parent interface{}, relation string, children interface{}, attrsPerChild map[interface{}]map[string]interface{})) *Orm_SaveManyWithPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}), args[3].(map[interface{}]map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SaveManyWithPivot_Call) Return(_a0 error) *Orm_SaveManyWithPivot_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_SaveManyWithPivot_Call) RunAndReturn(run func(interface{}, string, interface{}, map[interface{}]map[string]interface{}) error) *Orm_SaveManyWithPivot_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SaveWithPivot provides a mock function with given fields: parent, relation, child, attrs
+func (_m *Orm) SaveWithPivot(parent interface{}, relation string, child interface{}, attrs map[string]interface{}) error {
+	ret := _m.Called(parent, relation, child, attrs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveWithPivot")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}, map[string]interface{}) error); ok {
+		r0 = rf(parent, relation, child, attrs)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_SaveWithPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveWithPivot'
+type Orm_SaveWithPivot_Call struct {
+	*mock.Call
+}
+
+// SaveWithPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - child interface{}
+//   - attrs map[string]interface{}
+func (_e *Orm_Expecter) SaveWithPivot(parent interface{}, relation interface{}, child interface{}, attrs interface{}) *Orm_SaveWithPivot_Call {
+	return &Orm_SaveWithPivot_Call{Call: _e.mock.On("SaveWithPivot", parent, relation, child, attrs)}
+}
+
+func (_c *Orm_SaveWithPivot_Call) Run(run func(parent interface{}, relation string, child interface{}, attrs map[string]interface{})) *Orm_SaveWithPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}), args[3].(map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SaveWithPivot_Call) Return(_a0 error) *Orm_SaveWithPivot_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_SaveWithPivot_Call) RunAndReturn(run func(interface{}, string, interface{}, map[string]interface{}) error) *Orm_SaveWithPivot_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1146,6 +1489,56 @@ func (_c *Orm_UpdateExistingPivot_Call) Return(_a0 int64, _a1 error) *Orm_Update
 }
 
 func (_c *Orm_UpdateExistingPivot_Call) RunAndReturn(run func(interface{}, string, interface{}, map[string]interface{}) (int64, error)) *Orm_UpdateExistingPivot_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateOrCreate provides a mock function with given fields: parent, relation, attrs, values, dest
+func (_m *Orm) UpdateOrCreate(parent interface{}, relation string, attrs map[string]interface{}, values map[string]interface{}, dest interface{}) error {
+	ret := _m.Called(parent, relation, attrs, values, dest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateOrCreate")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[string]interface{}, map[string]interface{}, interface{}) error); ok {
+		r0 = rf(parent, relation, attrs, values, dest)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_UpdateOrCreate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateOrCreate'
+type Orm_UpdateOrCreate_Call struct {
+	*mock.Call
+}
+
+// UpdateOrCreate is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - attrs map[string]interface{}
+//   - values map[string]interface{}
+//   - dest interface{}
+func (_e *Orm_Expecter) UpdateOrCreate(parent interface{}, relation interface{}, attrs interface{}, values interface{}, dest interface{}) *Orm_UpdateOrCreate_Call {
+	return &Orm_UpdateOrCreate_Call{Call: _e.mock.On("UpdateOrCreate", parent, relation, attrs, values, dest)}
+}
+
+func (_c *Orm_UpdateOrCreate_Call) Run(run func(parent interface{}, relation string, attrs map[string]interface{}, values map[string]interface{}, dest interface{})) *Orm_UpdateOrCreate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[string]interface{}), args[3].(map[string]interface{}), args[4].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_UpdateOrCreate_Call) Return(_a0 error) *Orm_UpdateOrCreate_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_UpdateOrCreate_Call) RunAndReturn(run func(interface{}, string, map[string]interface{}, map[string]interface{}, interface{}) error) *Orm_UpdateOrCreate_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -297,3 +297,87 @@ func TestMutateDissociate_MorphTo_ClearsFKAndType(t *testing.T) {
 	assert.Equal(t, uint(0), parent.ImageableID)
 	assert.Equal(t, "", parent.ImageableType)
 }
+
+// Phase A/B tests: HasOneOrMany and BelongsToMany convenience methods
+
+func TestCreateRelation_UnsupportedKind_HasManyThrough(t *testing.T) {
+	q := newRelQueryWith(t, &relCountry{})
+	err := q.CreateRelation(&relCountry{ID: 1}, "Posts", &relPost{})
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestCreateRelation_UnsupportedKind_BelongsTo(t *testing.T) {
+	q := newRelQueryWith(t, &relBook{})
+	err := q.CreateRelation(&relBook{ID: 1}, "Author", &relUser{})
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestFindOrNewRelation_UnsupportedKind_BelongsTo(t *testing.T) {
+	q := newRelQueryWith(t, &relBook{})
+	var dest relUser
+	err := q.FindOrNewRelation(&relBook{ID: 1}, "Author", uint(5), &dest)
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestFirstOrNewRelation_UnsupportedKind_Through(t *testing.T) {
+	q := newRelQueryWith(t, &relCountry{})
+	var dest relPost
+	err := q.FirstOrNewRelation(&relCountry{ID: 1}, "Posts", map[string]any{"title": "x"}, nil, &dest)
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestFirstOrCreateRelation_UnsupportedKind_BelongsTo(t *testing.T) {
+	q := newRelQueryWith(t, &relBook{})
+	var dest relUser
+	err := q.FirstOrCreateRelation(&relBook{ID: 1}, "Author", map[string]any{"name": "x"}, nil, &dest)
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestUpdateOrCreateRelation_UnsupportedKind_Through(t *testing.T) {
+	q := newRelQueryWith(t, &relCountry{})
+	var dest relPost
+	err := q.UpdateOrCreateRelation(&relCountry{ID: 1}, "Posts", map[string]any{"title": "x"}, map[string]any{"content": "y"}, &dest)
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+// Phase C tests: PivotTimestamps
+
+func TestBasePivotRow_Timestamps_IncludesCreatedUpdatedAt(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
+	assert.NoError(t, err)
+
+	// Enable timestamps on the descriptor
+	desc.pivotTimestamps = true
+	desc.pivotCreatedAtColumn = "created_at"
+	desc.pivotUpdatedAtColumn = "updated_at"
+
+	row := q.basePivotRow(desc, uint(7), uint(99), nil)
+	assert.Equal(t, uint(7), row[desc.pivotParentRef.foreignColumn])
+	assert.Equal(t, uint(99), row[desc.pivotRelatedRef.foreignColumn])
+
+	_, hasCreatedAt := row["created_at"]
+	assert.True(t, hasCreatedAt, "pivot row must include created_at when pivotTimestamps is true")
+
+	_, hasUpdatedAt := row["updated_at"]
+	assert.True(t, hasUpdatedAt, "pivot row must include updated_at when pivotTimestamps is true")
+}
+
+func TestBasePivotRow_Timestamps_AttrsCanOverride(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
+	assert.NoError(t, err)
+
+	desc.pivotTimestamps = true
+	desc.pivotCreatedAtColumn = "created_at"
+	desc.pivotUpdatedAtColumn = "updated_at"
+
+	customTime := "2024-01-01 00:00:00"
+	row := q.basePivotRow(desc, uint(7), uint(99), map[string]any{
+		"created_at": customTime,
+	})
+
+	assert.Equal(t, customTime, row["created_at"], "caller-supplied attrs must override timestamp")
+	_, hasUpdatedAt := row["updated_at"]
+	assert.True(t, hasUpdatedAt, "updated_at should still be set")
+}

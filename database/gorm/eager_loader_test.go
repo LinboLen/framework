@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	contractsdatabase "github.com/goravel/framework/contracts/database"
+	contractsorm "github.com/goravel/framework/contracts/database/orm"
 	"github.com/goravel/framework/errors"
 )
 
@@ -278,4 +279,63 @@ func TestMaybeRecurseEmpty_ManyAssignsEmptySlices(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, u1.Books)
 	assert.Empty(t, u2.Books)
+}
+
+// --- Phase D: Pivot column hydration tests --------------------------------
+
+type roleWithPivot struct {
+	ID    uint
+	Name  string
+	Pivot contractsorm.Pivot `gorm:"-"`
+}
+
+type roleWithoutPivot struct {
+	ID   uint
+	Name string
+}
+
+func TestWritePivotField_HydratesMapField(t *testing.T) {
+	role := &roleWithPivot{ID: 1, Name: "admin"}
+	rv := reflect.ValueOf(role)
+	data := map[string]any{
+		"priority": "high",
+		"notes":    "test",
+	}
+
+	ok := writePivotField(rv, data)
+	assert.True(t, ok, "writePivotField should return true when field exists")
+	assert.NotNil(t, role.Pivot)
+	assert.Equal(t, "high", role.Pivot["priority"])
+	assert.Equal(t, "test", role.Pivot["notes"])
+}
+
+func TestWritePivotField_InitializesNilMap(t *testing.T) {
+	role := &roleWithPivot{ID: 1, Name: "admin"}
+	assert.Nil(t, role.Pivot, "Pivot should start as nil")
+
+	rv := reflect.ValueOf(role)
+	data := map[string]any{"key": "value"}
+
+	ok := writePivotField(rv, data)
+	assert.True(t, ok)
+	assert.NotNil(t, role.Pivot, "writePivotField should initialize nil map")
+	assert.Equal(t, "value", role.Pivot["key"])
+}
+
+func TestWritePivotField_NoPivotField_ReturnsFalse(t *testing.T) {
+	role := &roleWithoutPivot{ID: 1, Name: "admin"}
+	rv := reflect.ValueOf(role)
+	data := map[string]any{"key": "value"}
+
+	ok := writePivotField(rv, data)
+	assert.False(t, ok, "writePivotField should return false when Pivot field doesn't exist")
+}
+
+func TestWritePivotField_NonStructInput_ReturnsFalse(t *testing.T) {
+	var notStruct int = 42
+	rv := reflect.ValueOf(&notStruct)
+	data := map[string]any{"key": "value"}
+
+	ok := writePivotField(rv, data)
+	assert.False(t, ok, "writePivotField should return false for non-struct input")
 }

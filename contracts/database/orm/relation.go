@@ -224,11 +224,20 @@ type Many2Many struct {
 	ParentKey string
 	// RelatedKey is the column on the related referenced by RelatedPivotKey. Optional, "id".
 	RelatedKey string
-	// PivotColumns are extra pivot columns to surface on read.
+	// PivotColumns are extra pivot columns to surface on eager-loaded results via the related
+	// model's `Pivot orm.Pivot` field. See the Pivot type alias for the read-side hydration
+	// convention.
 	PivotColumns []string
-	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table.
+	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table; the
+	// framework auto-stamps them on Attach / Sync / Save and updated_at on UpdateExistingPivot.
 	PivotTimestamps bool
-	OnQuery         RelationCallback
+	// PivotCreatedAt overrides the created_at column name on the pivot table. Default "created_at".
+	// Only consulted when PivotTimestamps is true.
+	PivotCreatedAt string
+	// PivotUpdatedAt overrides the updated_at column name on the pivot table. Default "updated_at".
+	// Only consulted when PivotTimestamps is true.
+	PivotUpdatedAt string
+	OnQuery        RelationCallback
 }
 
 func (Many2Many) Kind() RelationKind { return KindMany2Many }
@@ -305,6 +314,8 @@ type MorphToMany struct {
 	RelatedKey      string
 	PivotColumns    []string
 	PivotTimestamps bool
+	PivotCreatedAt  string
+	PivotUpdatedAt  string
 	OnQuery         RelationCallback
 }
 
@@ -323,6 +334,8 @@ type MorphedByMany struct {
 	RelatedKey      string
 	PivotColumns    []string
 	PivotTimestamps bool
+	PivotCreatedAt  string
+	PivotUpdatedAt  string
 	OnQuery         RelationCallback
 }
 
@@ -365,6 +378,25 @@ type HasManyThrough struct {
 }
 
 func (HasManyThrough) Kind() RelationKind { return KindHasManyThrough }
+
+// Pivot is the carrier for extra pivot-table columns surfaced on eager-loaded models in the
+// BelongsToMany family (Many2Many, MorphToMany, MorphedByMany). When a related model declares
+// a `Pivot orm.Pivot` field tagged `gorm:"-"`, the eager loader pulls every column listed in the
+// relation's PivotColumns (plus the timestamp columns when PivotTimestamps is true) and writes
+// them into that field keyed by column name.
+//
+// Example:
+//
+//	type Role struct {
+//	    ID    uint
+//	    Name  string
+//	    Pivot orm.Pivot `gorm:"-"`   // populated by With("Roles") / Load("Roles")
+//	}
+//
+// The convention is eager-load only — NewRelation(parent, "Roles").Get(&roles) returns the bare
+// related rows without populating the Pivot field. Callers that need ad-hoc pivot reads should
+// use eager loading.
+type Pivot = map[string]any
 
 // ModelWithRelations is implemented by every model that declares relationships. The single map
 // returned by Relations() is the only place relations are declared. GORM relation struct tags

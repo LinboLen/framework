@@ -73,6 +73,36 @@ type Orm interface {
 	Toggle(parent any, relation string, ids []any) (*db.SyncResult, error)
 	// UpdateExistingPivot updates pivot columns for an already-attached id.
 	UpdateExistingPivot(parent any, relation string, id any, attrs map[string]any) (int64, error)
+
+	// Create persists a new related row. For HasOneOrMany kinds (HasOne, HasMany, MorphOne,
+	// MorphMany) the framework first sets the FK (and morph type column) on dest from parent,
+	// then inserts. For BelongsToMany kinds (Many2Many, MorphToMany, MorphedByMany) the framework
+	// inserts dest first, then writes a pivot row linking parent and the new dest. dest must be
+	// a non-nil pointer to a struct of the related type.
+	Create(parent any, relation string, dest any) error
+	// CreateMany is the slice form of Create.
+	CreateMany(parent any, relation string, dests any) error
+	// FindOrNew finds the related row with primary key id. If absent, fills dest with a new
+	// instance of the related model and pre-sets the FK (and morph type) — but does NOT persist.
+	// dest must be a pointer to a struct.
+	FindOrNew(parent any, relation string, id any, dest any) error
+	// FirstOrNew finds the first related row matching attrs. If absent, fills dest with a new
+	// instance carrying attrs+values and pre-set FK — does NOT persist.
+	FirstOrNew(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error
+	// FirstOrCreate is FirstOrNew that persists when no matching row exists. For BelongsToMany
+	// kinds also writes a pivot row.
+	FirstOrCreate(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error
+	// UpdateOrCreate finds the first related row matching attrs (or creates one), then overlays
+	// values onto it and persists. For BelongsToMany kinds also writes a pivot row when freshly
+	// created. Always saves dest.
+	UpdateOrCreate(parent any, relation string, attrs map[string]any, values map[string]any, dest any) error
+	// SaveWithPivot is Save with caller-supplied pivot column values for the BelongsToMany family.
+	// On HasOneOrMany kinds attrs is ignored (no pivot row).
+	SaveWithPivot(parent any, relation string, child any, attrs map[string]any) error
+	// SaveManyWithPivot is the slice form of SaveWithPivot. attrsPerChild is keyed by the related
+	// PK of each child; an entry may be nil to attach without extra columns.
+	SaveManyWithPivot(parent any, relation string, children any, attrsPerChild map[any]map[string]any) error
+
 	// Observe registers an observer with the Orm.
 	Observe(model any, observer Observer)
 	// Query gets a new query builder instance.
