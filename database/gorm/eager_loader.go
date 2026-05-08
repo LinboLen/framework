@@ -321,6 +321,7 @@ func (r *Query) loadMorphTo(parents []reflect.Value, parentModel any, desc *rela
 			parentTable:  desc.parentTable,
 			relatedTable: relatedTable,
 			relatedModel: sample,
+			onQuery:      desc.onQuery, // propagate so the default scope applies per bucket
 		}
 		ownerKey := desc.morphOwnerKey
 		if ownerKey == "" {
@@ -644,6 +645,15 @@ func (r *Query) loadThrough(parents []reflect.Value, parentModel any, desc *rela
 // they are appended to the user's prune list when not already present so the caller does not have
 // to remember to include them.
 func (r *Query) runRelatedQuery(inner *gormio.DB, desc *relationDescriptor, entry eagerLoadEntry, requiredCols []string) ([]reflect.Value, error) {
+	// Apply the per-relation default scope first so callers can layer extra constraints on top
+	// via With("Books", func(q) { ... }).
+	if desc.onQuery != nil {
+		wrapper := r.wrap(inner)
+		wrapped := desc.onQuery(wrapper)
+		if w, ok := wrapped.(*Query); ok {
+			inner = w.buildConditions().instance
+		}
+	}
 	var oneOfMany *oneOfManyConfig
 	if entry.callback != nil {
 		wrapper := r.wrap(inner)

@@ -566,6 +566,13 @@ func (r *Query) applyMorphToExistence(db *gormio.DB, desc *relationDescriptor, i
 		inner := r.freshSession().Table(relatedTable).Where(fmt.Sprintf("%s.%s = %s.%s",
 			quoteIdent(relatedTable), quoteIdent(ownerKey),
 			quoteIdent(desc.parentTable), quoteIdent(desc.morphIDColumn)))
+		if desc.onQuery != nil {
+			wrapper := r.wrap(inner)
+			result := desc.onQuery(wrapper)
+			if w, ok := result.(*Query); ok {
+				inner = w.buildConditions().instance
+			}
+		}
 		if perTypeCallback != nil {
 			wrapper := r.wrap(inner)
 			result := perTypeCallback(wrapper)
@@ -666,6 +673,16 @@ func (r *Query) compileExistenceSubquery(desc *relationDescriptor, callback cont
 		return inner
 	}
 
+	// Apply the relation's default scope before the caller's callback so the user's WhereHas
+	// callback can layer on top of the always-on filter.
+	if desc.onQuery != nil {
+		wrapper := r.wrap(inner)
+		wrapped := desc.onQuery(wrapper)
+		if w, ok := wrapped.(*Query); ok {
+			inner = w.buildConditions().instance
+		}
+	}
+
 	if callback != nil {
 		wrapper := r.wrap(inner)
 		wrapped := callback(wrapper)
@@ -695,6 +712,13 @@ func (r *Query) compileMorphExistenceSubquery(desc *relationDescriptor, morphVal
 	}
 	inner = inner.Where(fmt.Sprintf("%s.%s = ?",
 		quoteIdent(desc.relatedTable), quoteIdent(desc.morphTypeColumn)), morphValue)
+	if desc.onQuery != nil {
+		wrapper := r.wrap(inner)
+		wrapped := desc.onQuery(wrapper)
+		if w, ok := wrapped.(*Query); ok {
+			inner = w.buildConditions().instance
+		}
+	}
 	if callback != nil {
 		wrapper := r.wrap(inner)
 		wrapped := callback(wrapper)

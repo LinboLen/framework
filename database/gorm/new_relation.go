@@ -30,23 +30,31 @@ func (r *Query) newRelationQuery(parent any, relation string) contractsorm.Query
 		return r.guardedQuery(err)
 	}
 
+	var built contractsorm.Query
 	switch desc.kind {
 	case relKindHasOne, relKindHasMany:
-		return r.newHasOneOrManyQuery(parent, desc)
+		built = r.newHasOneOrManyQuery(parent, desc)
 	case relKindBelongsTo:
-		return r.newBelongsToQuery(parent, desc)
+		built = r.newBelongsToQuery(parent, desc)
 	case relKindMorphOne, relKindMorphMany:
-		return r.newMorphOneOrManyQuery(parent, desc)
+		built = r.newMorphOneOrManyQuery(parent, desc)
 	case relKindMorphTo:
-		return r.newMorphToQuery(parent, desc)
+		built = r.newMorphToQuery(parent, desc)
 	case relKindMany2Many:
-		return r.newMany2ManyQuery(parent, desc, false)
+		built = r.newMany2ManyQuery(parent, desc, false)
 	case relKindMorphToMany:
-		return r.newMany2ManyQuery(parent, desc, true)
+		built = r.newMany2ManyQuery(parent, desc, true)
 	case relKindHasOneThrough, relKindHasManyThrough:
-		return r.newThroughQuery(parent, desc)
+		built = r.newThroughQuery(parent, desc)
+	default:
+		return r.guardedQuery(errors.OrmRelationUnsupported.Args(relation, fmt.Sprintf("%T", parent), fmt.Sprintf("kind=%d", desc.kind)))
 	}
-	return r.guardedQuery(errors.OrmRelationUnsupported.Args(relation, fmt.Sprintf("%T", parent), fmt.Sprintf("kind=%d", desc.kind)))
+	// Apply the relation's default scope on top of the per-kind constraints. Caller still gets
+	// a chainable Query and can layer further conditions via Where / OrderBy / etc.
+	if desc.onQuery != nil {
+		built = desc.onQuery(built)
+	}
+	return built
 }
 
 // --- per-kind builders -----------------------------------------------------

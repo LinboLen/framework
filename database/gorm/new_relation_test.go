@@ -148,3 +148,52 @@ func TestNewRelation_MorphToMany_AddsPivotTypeFilter(t *testing.T) {
 	assert.Contains(t, sql, "taggables")
 	assert.Contains(t, sql, "taggable_type")
 }
+
+// --- OnQuery hook ----------------------------------------------------------
+
+// scopedUser declares a HasMany whose OnQuery scope filters out unpublished books. Every code
+// path that builds a query for this relation (NewRelation, eager load, existence) must apply
+// the scope.
+type scopedUser struct {
+	ID    uint
+	Books []*scopedBook `gorm:"-"`
+}
+
+func (scopedUser) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Books": {
+			Kind:       contractsorm.HasMany,
+			Related:    &scopedBook{},
+			ForeignKey: "user_id",
+			OnQuery: func(q contractsorm.Query) contractsorm.Query {
+				return q.Where("published", true)
+			},
+		},
+	}
+}
+
+type scopedBook struct {
+	ID        uint
+	UserID    uint
+	Title     string
+	Published bool
+}
+
+func TestNewRelation_OnQuery_AppliedToReturnedQuery(t *testing.T) {
+	q := newRelQueryWith(t, &scopedUser{})
+	rel := q.NewRelation(&scopedUser{ID: 5}, "Books")
+	sql := newRelationSQL(t, rel, &[]scopedBook{})
+	// The generated WHERE must include both the FK constraint and the OnQuery's published=true.
+	assert.Contains(t, sql, "user_id")
+	assert.Contains(t, sql, "published")
+}
+
+func TestCompileExistenceSubquery_OnQuery_AppliedInExistenceCheck(t *testing.T) {
+	q := newRelQueryWith(t, &scopedUser{})
+	desc, err := resolveRelation(q.instance, &scopedUser{}, "Books")
+	assert.NoError(t, err)
+	inner := q.compileExistenceSubquery(desc, nil)
+	stmt := inner.Session(&gormio.Session{DryRun: true}).Find(&[]scopedBook{})
+	sql := stmt.Statement.SQL.String()
+	assert.Contains(t, sql, "published")
+}

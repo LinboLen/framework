@@ -69,6 +69,11 @@ type relationDescriptor struct {
 	localKey       string // PK on parent
 	secondLocalKey string // PK on through
 
+	// onQuery is the per-relation default scope from Relation.OnQuery. Applied by every code
+	// path that builds an inner query for this relation (eager loaders, existence builders,
+	// NewRelation), *before* any caller-supplied callback.
+	onQuery contractsorm.RelationCallback
+
 	// next link for nested resolution (e.g. "Books.Author")
 	nested *relationDescriptor
 }
@@ -140,24 +145,35 @@ func descriptorFromRelations(db *gormio.DB, parent any, parentTable, name string
 		return nil, errors.OrmRelationNotFound.Args(name, reflect.TypeOf(parent).String())
 	}
 
+	var (
+		desc *relationDescriptor
+		err  error
+	)
 	switch rel.Kind {
 	case contractsorm.HasOne, contractsorm.HasMany:
-		return descriptorFromHasOneOrMany(db, parent, parentTable, name, rel)
+		desc, err = descriptorFromHasOneOrMany(db, parent, parentTable, name, rel)
 	case contractsorm.BelongsTo:
-		return descriptorFromBelongsTo(db, parent, parentTable, name, rel)
+		desc, err = descriptorFromBelongsTo(db, parent, parentTable, name, rel)
 	case contractsorm.Many2Many:
-		return descriptorFromMany2Many(db, parent, parentTable, name, rel, false)
+		desc, err = descriptorFromMany2Many(db, parent, parentTable, name, rel, false)
 	case contractsorm.MorphOne, contractsorm.MorphMany:
-		return descriptorFromMorphOneOrMany(db, parent, parentTable, name, rel)
+		desc, err = descriptorFromMorphOneOrMany(db, parent, parentTable, name, rel)
 	case contractsorm.MorphTo:
-		return descriptorFromMorphTo(parent, parentTable, name, rel)
+		desc, err = descriptorFromMorphTo(parent, parentTable, name, rel)
 	case contractsorm.MorphToMany, contractsorm.MorphedByMany:
-		return descriptorFromMorphToManyRel(db, parent, parentTable, name, rel)
+		desc, err = descriptorFromMorphToManyRel(db, parent, parentTable, name, rel)
 	case contractsorm.HasOneThrough, contractsorm.HasManyThrough:
-		return descriptorFromThroughRel(db, parent, parentTable, name, rel)
+		desc, err = descriptorFromThroughRel(db, parent, parentTable, name, rel)
 	default:
 		return nil, errors.OrmMorphRelationKindUnknown.Args(name, reflect.TypeOf(parent).String(), string(rel.Kind))
 	}
+	if err != nil {
+		return nil, err
+	}
+	// Carry the per-relation default-scope hook into the descriptor; every consumer (eager
+	// loader, existence builder, NewRelation) applies it before any caller callback.
+	desc.onQuery = rel.OnQuery
+	return desc, nil
 }
 
 func descriptorFromHasOneOrMany(db *gormio.DB, parent any, parentTable, name string, rel contractsorm.Relation) (*relationDescriptor, error) {

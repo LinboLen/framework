@@ -256,6 +256,25 @@ type Relation struct {
 
 	// SecondLocalKey is the PK on the through table referenced by SecondKey. Defaults to "id".
 	SecondLocalKey string
+
+	// OnQuery is a default scope applied to every query the framework builds for this relation
+	// — eager loads (With / Load), existence checks (Has / WhereHas), aggregates (WithCount /
+	// WithSum / etc.) and ad-hoc lookups (Orm.NewRelation). Receives the inner query *after* the
+	// per-kind FK / morph filters have been applied; returns the (possibly modified) query that
+	// the framework will continue with.
+	//
+	// Applied before any caller-supplied callback so the OnQuery scope is always in effect, and
+	// callers can layer extra conditions on top via With("Books", func(q) { ... }).
+	//
+	// Typical use — only ever load published comments for any Post relation chain:
+	//
+	//	"Comments": {
+	//	    Kind: orm.HasMany, Related: &Comment{},
+	//	    OnQuery: func(q orm.Query) orm.Query { return q.Where("published", true) },
+	//	},
+	//
+	// Mirrors fedaco's `onQuery` decorator option (libs/fedaco/src/annotation/relation-column.ts:17).
+	OnQuery RelationCallback
 }
 
 // ModelWithRelations is implemented by every model that declares relationships. The single map
