@@ -161,8 +161,7 @@ type scopedUser struct {
 
 func (scopedUser) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Books": {
-			Kind:       contractsorm.HasMany,
+		"Books": contractsorm.HasMany{
 			Related:    &scopedBook{},
 			ForeignKey: "user_id",
 			OnQuery: func(q contractsorm.Query) contractsorm.Query {

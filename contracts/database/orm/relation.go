@@ -115,167 +115,256 @@ type RelationCount struct {
 	Callback RelationCallback
 }
 
-// RelationKind enumerates every supported relationship flavour. All relations are declared via
-// a single ModelWithRelations interface; GORM relation struct tags (`foreignKey:`, `references:`,
-// `many2many:`, `polymorphic:`) are forbidden because they couldn't express the full surface and
-// because spreading metadata across two declaration mechanisms made model definitions hard to
-// audit.
+// RelationKind names a relationship flavour for diagnostic / error-message use only. The
+// per-kind structs below (HasOne, HasMany, ...) are the actual user-facing declaration types;
+// the RelationKind constants exist purely so error messages can refer to a kind by name.
 type RelationKind string
 
 const (
-	// HasOne — the related row holds a foreign key referencing this model.
-	HasOne RelationKind = "hasOne"
-	// HasMany — multi-result HasOne.
-	HasMany RelationKind = "hasMany"
-	// BelongsTo — this model holds a foreign key referencing the related row.
-	BelongsTo RelationKind = "belongsTo"
-	// Many2Many — through a pivot table whose rows pair this model and the related.
-	Many2Many RelationKind = "many2Many"
-	// MorphOne — the related row holds <Name>_id and <Name>_type referencing one of several
-	// possible parent kinds.
-	MorphOne RelationKind = "morphOne"
-	// MorphMany — multi-result MorphOne.
-	MorphMany RelationKind = "morphMany"
-	// MorphTo — this model holds <Name>_id + <Name>_type and resolves to one of several parent
-	// kinds via the morph map registry.
-	MorphTo RelationKind = "morphTo"
-	// MorphToMany — through a pivot that carries <Name>_id + <Name>_type plus a related FK.
-	MorphToMany RelationKind = "morphToMany"
-	// MorphedByMany — the inverse side of MorphToMany.
-	MorphedByMany RelationKind = "morphedByMany"
-	// HasOneThrough — like HasOne but reached through an intermediate ("through") table.
-	HasOneThrough RelationKind = "hasOneThrough"
-	// HasManyThrough — multi-result HasOneThrough.
-	HasManyThrough RelationKind = "hasManyThrough"
+	KindHasOne         RelationKind = "hasOne"
+	KindHasMany        RelationKind = "hasMany"
+	KindBelongsTo      RelationKind = "belongsTo"
+	KindMany2Many      RelationKind = "many2Many"
+	KindMorphOne       RelationKind = "morphOne"
+	KindMorphMany      RelationKind = "morphMany"
+	KindMorphTo        RelationKind = "morphTo"
+	KindMorphToMany    RelationKind = "morphToMany"
+	KindMorphedByMany  RelationKind = "morphedByMany"
+	KindHasOneThrough  RelationKind = "hasOneThrough"
+	KindHasManyThrough RelationKind = "hasManyThrough"
 )
 
-// Relation describes one relationship. Field relevance depends on Kind — fields not relevant to
-// the chosen kind are ignored. When optional fields are left zero, the framework fills them
-// using snake_case naming conventions (singular table name + "_id", etc.).
+// Relation is the sealed interface implemented by every per-kind relation declaration struct
+// (HasOne, HasMany, BelongsTo, Many2Many, MorphOne, MorphMany, MorphTo, MorphToMany,
+// MorphedByMany, HasOneThrough, HasManyThrough). The relation() method is unexported so external
+// packages cannot define new kinds — the resolver type-switches on the closed set defined here.
 //
-// Required fields per kind:
-//
-//   - HasOne / HasMany / BelongsTo / Many2Many:   Related
-//   - MorphOne / MorphMany / MorphToMany / MorphedByMany: Related, Name
-//   - MorphTo:                                    Name (Related is resolved per-row via morph map)
-//   - HasOneThrough / HasManyThrough:             Related, Through
-//
-// Default values for optional fields:
-//
-//   - LocalKey / ParentKey / OwnerKey / RelatedKey / SecondLocalKey: "id"
-//   - HasOne / HasMany ForeignKey:        singular(parentTable) + "_id"
-//   - BelongsTo ForeignKey:               singular(relatedTable) + "_id"
-//   - Many2Many Table:                    alphabetical singular pair, e.g. "post_tag"
-//   - Many2Many ForeignPivotKey:          singular(parentTable) + "_id"
-//   - Many2Many RelatedPivotKey:          singular(relatedTable) + "_id"
-//   - MorphOne / MorphMany / MorphTo TypeColumn: Name + "_type"
-//   - MorphOne / MorphMany / MorphTo IDColumn:   Name + "_id"
-//   - MorphToMany / MorphedByMany Table:         pluralize(Name)  e.g. "taggables"
-//   - MorphToMany / MorphedByMany ForeignPivotKey: Name + "_id"
-//   - HasOneThrough / HasManyThrough FirstKey:   singular(parentTable) + "_id"
-//   - HasOneThrough / HasManyThrough SecondKey:  singular(throughTable) + "_id"
-//
-// Example — a single User declaration:
+// Models declare their relationships in a single map:
 //
 //	func (User) Relations() map[string]orm.Relation {
 //	    return map[string]orm.Relation{
-//	        "Books":  {Kind: orm.HasMany,        Related: &Book{}},
-//	        "Roles":  {Kind: orm.Many2Many,      Related: &Role{}, Table: "user_roles"},
-//	        "Houses": {Kind: orm.MorphMany,      Related: &House{}, Name: "houseable"},
-//	        "Posts":  {Kind: orm.HasManyThrough, Related: &Post{},  Through: &Account{}},
+//	        "Books":   orm.HasMany{Related: &Book{}},
+//	        "Roles":   orm.Many2Many{Related: &Role{}, Table: "user_roles"},
+//	        "Houses":  orm.MorphMany{Related: &House{}, Name: "houseable"},
+//	        "Posts":   orm.HasManyThrough{Related: &Post{}, Through: &Account{}},
 //	    }
 //	}
 //
 // All relation fields on the model struct must be tagged `gorm:"-"` so GORM doesn't try to
 // auto-resolve them from struct tags.
-type Relation struct {
-	// Kind selects the relation flavour. Required for every entry.
-	Kind RelationKind
+type Relation interface {
+	// Kind returns the relation flavour for diagnostics (error messages, logging). The resolver
+	// itself dispatches by Go type, not by the Kind value.
+	Kind() RelationKind
+}
 
-	// Related is a sample instance of the related model (e.g. &Book{}). Required for all
-	// kinds except MorphTo.
+// HasOne declares a one-to-one relation where the related row holds a foreign key referencing
+// this model.
+//
+// Defaults: ForeignKey = singular(parentTable) + "_id"; LocalKey = "id".
+type HasOne struct {
+	// Related is a sample instance of the related model (e.g. &Profile{}).
 	Related any
-
-	// Name is the polymorphic name (e.g. "imageable", "taggable"). Required for the five
-	// polymorphic kinds; ignored otherwise.
-	Name string
-
-	// ForeignKey is the column on the related table for HasOne / HasMany, or on this table
-	// for BelongsTo. Defaults are described above.
+	// ForeignKey is the column on the related table referencing the parent. Optional.
 	ForeignKey string
-
-	// LocalKey is the column on the parent referenced by ForeignKey. Defaults to "id".
+	// LocalKey is the column on the parent referenced by ForeignKey. Optional, defaults to "id".
 	LocalKey string
-
-	// OwnerKey is the column on the related referenced by ForeignKey for BelongsTo / MorphTo.
-	// Defaults to "id".
-	OwnerKey string
-
-	// TypeColumn is the polymorphic type column. Defaults to <Name> + "_type".
-	TypeColumn string
-
-	// IDColumn is the polymorphic id column. Defaults to <Name> + "_id".
-	IDColumn string
-
-	// Table is the pivot table for Many2Many / MorphToMany / MorphedByMany. Default rules
-	// described above.
-	Table string
-
-	// ForeignPivotKey is the pivot column referencing the parent (or related, for inverse
-	// MorphedByMany). Defaults described above.
-	ForeignPivotKey string
-
-	// RelatedPivotKey is the pivot column referencing the related (or parent, for inverse).
-	// Defaults to singular(relatedTable) + "_id".
-	RelatedPivotKey string
-
-	// ParentKey is the column on the parent referenced by ForeignPivotKey for the M2M family.
-	// Defaults to "id".
-	ParentKey string
-
-	// RelatedKey is the column on the related referenced by RelatedPivotKey for the M2M family.
-	// Defaults to "id".
-	RelatedKey string
-
-	// PivotColumns are extra pivot columns to surface on read.
-	PivotColumns []string
-
-	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table.
-	PivotTimestamps bool
-
-	// Through is the intermediate model for HasOneThrough / HasManyThrough.
-	Through any
-
-	// FirstKey is the FK on the through table pointing at parent. Default:
-	// singular(parentTable) + "_id".
-	FirstKey string
-
-	// SecondKey is the FK on the related table pointing at through. Default:
-	// singular(throughTable) + "_id".
-	SecondKey string
-
-	// SecondLocalKey is the PK on the through table referenced by SecondKey. Defaults to "id".
-	SecondLocalKey string
-
-	// OnQuery is a default scope applied to every query the framework builds for this relation
-	// — eager loads (With / Load), existence checks (Has / WhereHas), aggregates (WithCount /
-	// WithSum / etc.) and ad-hoc lookups (Orm.NewRelation). Receives the inner query *after* the
-	// per-kind FK / morph filters have been applied; returns the (possibly modified) query that
-	// the framework will continue with.
-	//
-	// Applied before any caller-supplied callback so the OnQuery scope is always in effect, and
-	// callers can layer extra conditions on top via With("Books", func(q) { ... }).
-	//
-	// Typical use — only ever load published comments for any Post relation chain:
-	//
-	//	"Comments": {
-	//	    Kind: orm.HasMany, Related: &Comment{},
-	//	    OnQuery: func(q orm.Query) orm.Query { return q.Where("published", true) },
-	//	},
-	//
-	// Mirrors fedaco's `onQuery` decorator option (libs/fedaco/src/annotation/relation-column.ts:17).
+	// OnQuery is a default scope applied to every query built for this relation (eager loads,
+	// existence checks, aggregates, NewRelation). Applied before any caller-supplied callback.
 	OnQuery RelationCallback
 }
+
+func (HasOne) Kind() RelationKind { return KindHasOne }
+
+// HasMany declares a one-to-many relation — the multi-result variant of HasOne.
+//
+// Defaults: ForeignKey = singular(parentTable) + "_id"; LocalKey = "id".
+type HasMany struct {
+	Related    any
+	ForeignKey string
+	LocalKey   string
+	OnQuery    RelationCallback
+}
+
+func (HasMany) Kind() RelationKind { return KindHasMany }
+
+// BelongsTo declares the inverse of HasOne / HasMany — this model holds a foreign key
+// referencing the related row.
+//
+// Defaults: ForeignKey = singular(relatedTable) + "_id"; OwnerKey = "id".
+type BelongsTo struct {
+	Related any
+	// ForeignKey is the column on the parent table referencing the related row. Optional.
+	ForeignKey string
+	// OwnerKey is the column on the related table referenced by ForeignKey. Optional, "id".
+	OwnerKey string
+	OnQuery  RelationCallback
+}
+
+func (BelongsTo) Kind() RelationKind { return KindBelongsTo }
+
+// Many2Many declares a many-to-many relation through a pivot table.
+//
+// Defaults:
+//
+//	Table            = alphabetical singular pair (e.g. "post_tag")
+//	ForeignPivotKey  = singular(parentTable) + "_id"
+//	RelatedPivotKey  = singular(relatedTable) + "_id"
+//	ParentKey        = "id"
+//	RelatedKey       = "id"
+type Many2Many struct {
+	Related any
+	// Table is the pivot table name. Optional.
+	Table string
+	// ForeignPivotKey is the pivot column referencing the parent. Optional.
+	ForeignPivotKey string
+	// RelatedPivotKey is the pivot column referencing the related. Optional.
+	RelatedPivotKey string
+	// ParentKey is the column on the parent referenced by ForeignPivotKey. Optional, "id".
+	ParentKey string
+	// RelatedKey is the column on the related referenced by RelatedPivotKey. Optional, "id".
+	RelatedKey string
+	// PivotColumns are extra pivot columns to surface on read.
+	PivotColumns []string
+	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table.
+	PivotTimestamps bool
+	OnQuery         RelationCallback
+}
+
+func (Many2Many) Kind() RelationKind { return KindMany2Many }
+
+// MorphOne declares a one-to-one polymorphic relation — the related row holds <Name>_id and
+// <Name>_type referencing one of several possible parent kinds.
+//
+// Defaults: TypeColumn = Name + "_type"; IDColumn = Name + "_id"; LocalKey = "id".
+type MorphOne struct {
+	Related any
+	// Name is the polymorphic name (e.g. "imageable", "taggable"). Required.
+	Name string
+	// TypeColumn is the polymorphic type column on the related table. Optional.
+	TypeColumn string
+	// IDColumn is the polymorphic id column on the related table. Optional.
+	IDColumn string
+	// LocalKey is the column on the parent referenced by IDColumn. Optional, "id".
+	LocalKey string
+	OnQuery  RelationCallback
+}
+
+func (MorphOne) Kind() RelationKind { return KindMorphOne }
+
+// MorphMany is the multi-result variant of MorphOne.
+type MorphMany struct {
+	Related    any
+	Name       string
+	TypeColumn string
+	IDColumn   string
+	LocalKey   string
+	OnQuery    RelationCallback
+}
+
+func (MorphMany) Kind() RelationKind { return KindMorphMany }
+
+// MorphTo declares the inverse polymorphic side: this model holds <Name>_id + <Name>_type and
+// resolves to one of several parent kinds via the morph map registry. There is no Related — the
+// concrete type is determined per row from the type column.
+//
+// Defaults: TypeColumn = Name + "_type"; IDColumn = Name + "_id"; OwnerKey = "id".
+type MorphTo struct {
+	// Name is the polymorphic name. Required.
+	Name string
+	// TypeColumn is the polymorphic type column on this table. Optional.
+	TypeColumn string
+	// IDColumn is the polymorphic id column on this table. Optional.
+	IDColumn string
+	// OwnerKey is the column on each related table referenced by IDColumn. Optional, "id".
+	OwnerKey string
+	OnQuery  RelationCallback
+}
+
+func (MorphTo) Kind() RelationKind { return KindMorphTo }
+
+// MorphToMany declares a polymorphic many-to-many — through a pivot that carries
+// <Name>_id + <Name>_type plus a related FK.
+//
+// Defaults:
+//
+//	Table            = pluralize(Name)  (e.g. "taggables")
+//	TypeColumn       = Name + "_type"
+//	ForeignPivotKey  = Name + "_id"
+//	RelatedPivotKey  = singular(relatedTable) + "_id"
+//	ParentKey        = "id"
+//	RelatedKey       = "id"
+type MorphToMany struct {
+	Related         any
+	Name            string
+	Table           string
+	TypeColumn      string
+	ForeignPivotKey string
+	RelatedPivotKey string
+	ParentKey       string
+	RelatedKey      string
+	PivotColumns    []string
+	PivotTimestamps bool
+	OnQuery         RelationCallback
+}
+
+func (MorphToMany) Kind() RelationKind { return KindMorphToMany }
+
+// MorphedByMany is the inverse side of MorphToMany — the morph value pins on the related rather
+// than the parent. Field semantics and defaults match MorphToMany.
+type MorphedByMany struct {
+	Related         any
+	Name            string
+	Table           string
+	TypeColumn      string
+	ForeignPivotKey string
+	RelatedPivotKey string
+	ParentKey       string
+	RelatedKey      string
+	PivotColumns    []string
+	PivotTimestamps bool
+	OnQuery         RelationCallback
+}
+
+func (MorphedByMany) Kind() RelationKind { return KindMorphedByMany }
+
+// HasOneThrough declares a relation reached through an intermediate ("through") table.
+//
+// Defaults:
+//
+//	FirstKey       = singular(parentTable) + "_id"
+//	SecondKey      = singular(throughTable) + "_id"
+//	LocalKey       = "id"
+//	SecondLocalKey = "id"
+type HasOneThrough struct {
+	Related any
+	// Through is the intermediate model.
+	Through any
+	// FirstKey is the FK on the through table pointing at parent. Optional.
+	FirstKey string
+	// SecondKey is the FK on the related table pointing at through. Optional.
+	SecondKey string
+	// LocalKey is the PK on the parent referenced by FirstKey. Optional, "id".
+	LocalKey string
+	// SecondLocalKey is the PK on the through table referenced by SecondKey. Optional, "id".
+	SecondLocalKey string
+	OnQuery        RelationCallback
+}
+
+func (HasOneThrough) Kind() RelationKind { return KindHasOneThrough }
+
+// HasManyThrough is the multi-result variant of HasOneThrough.
+type HasManyThrough struct {
+	Related        any
+	Through        any
+	FirstKey       string
+	SecondKey      string
+	LocalKey       string
+	SecondLocalKey string
+	OnQuery        RelationCallback
+}
+
+func (HasManyThrough) Kind() RelationKind { return KindHasManyThrough }
 
 // ModelWithRelations is implemented by every model that declares relationships. The single map
 // returned by Relations() is the only place relations are declared. GORM relation struct tags
@@ -284,4 +373,3 @@ type Relation struct {
 type ModelWithRelations interface {
 	Relations() map[string]Relation
 }
-

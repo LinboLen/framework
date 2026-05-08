@@ -57,11 +57,11 @@ type relUser struct {
 
 func (relUser) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Books":   {Kind: contractsorm.HasMany, Related: &relBook{}, ForeignKey: "user_id"},
-		"Profile": {Kind: contractsorm.HasOne, Related: &relProfile{}, ForeignKey: "user_id"},
-		"Roles":   {Kind: contractsorm.Many2Many, Related: &relRole{}, Table: "rel_user_roles"},
-		"Houses":  {Kind: contractsorm.MorphMany, Related: &relHouse{}, Name: "houseable"},
-		"Logo":    {Kind: contractsorm.MorphOne, Related: &relLogo{}, Name: "logoable"},
+		"Books":   contractsorm.HasMany{Related: &relBook{}, ForeignKey: "user_id"},
+		"Profile": contractsorm.HasOne{Related: &relProfile{}, ForeignKey: "user_id"},
+		"Roles":   contractsorm.Many2Many{Related: &relRole{}, Table: "rel_user_roles"},
+		"Houses":  contractsorm.MorphMany{Related: &relHouse{}, Name: "houseable"},
+		"Logo":    contractsorm.MorphOne{Related: &relLogo{}, Name: "logoable"},
 	}
 }
 
@@ -75,7 +75,7 @@ type relBook struct {
 
 func (relBook) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Author": {Kind: contractsorm.BelongsTo, Related: &relUser{}, ForeignKey: "author_id"},
+		"Author": contractsorm.BelongsTo{Related: &relUser{}, ForeignKey: "author_id"},
 	}
 }
 
@@ -112,26 +112,25 @@ type relCountry struct {
 
 func (relCountry) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Posts": {
-			Kind:    contractsorm.HasManyThrough,
+		"Posts": contractsorm.HasManyThrough{
 			Related: &relPost{},
 			Through: &relUser{},
 		},
-		"FirstPost": {
-			Kind:    contractsorm.HasOneThrough,
+		"FirstPost": contractsorm.HasOneThrough{
 			Related: &relPost{},
 			Through: &relUser{},
 		},
-		"NoRelated": {
-			Kind: contractsorm.HasManyThrough,
-		},
-		"BadKind": {
-			Kind:    "weird",
-			Related: &relPost{},
-			Through: &relUser{},
-		},
+		"NoRelated": contractsorm.HasManyThrough{},
+		"BadKind":   unknownRelation{},
 	}
 }
+
+// unknownRelation satisfies contractsorm.Relation but isn't one of the known per-kind structs.
+// Used to exercise the resolver's default branch (OrmMorphRelationKindUnknown) — a defensive
+// path that triggers if someone hand-rolls a Relation impl outside the standard set.
+type unknownRelation struct{}
+
+func (unknownRelation) Kind() contractsorm.RelationKind { return "weird" }
 
 type relPost struct {
 	ID     uint
@@ -342,7 +341,7 @@ type morphImage struct {
 
 func (morphImage) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Imageable": {Kind: contractsorm.MorphTo, Name: "imageable"},
+		"Imageable": contractsorm.MorphTo{Name: "imageable"},
 	}
 }
 
@@ -354,7 +353,7 @@ type morphPost struct {
 
 func (morphPost) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Tags": {Kind: contractsorm.MorphToMany, Related: &morphTag{}, Name: "taggable"},
+		"Tags": contractsorm.MorphToMany{Related: &morphTag{}, Name: "taggable"},
 	}
 }
 
@@ -366,7 +365,7 @@ type morphTag struct {
 
 func (morphTag) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Posts": {Kind: contractsorm.MorphedByMany, Related: &morphPost{}, Name: "taggable"},
+		"Posts": contractsorm.MorphedByMany{Related: &morphPost{}, Name: "taggable"},
 	}
 }
 
@@ -374,7 +373,7 @@ type morphBadKind struct{}
 
 func (morphBadKind) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"X": {Kind: "unknown"},
+		"X": unknownRelation{},
 	}
 }
 
@@ -382,7 +381,7 @@ type morphMissingRelated struct{}
 
 func (morphMissingRelated) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"X": {Kind: contractsorm.MorphMany, Name: "imageable"},
+		"X": contractsorm.MorphMany{Name: "imageable"},
 	}
 }
 

@@ -212,16 +212,15 @@ func namesOf(users []User) []string {
 // Ported from /libs/fedaco/test/relations/database-relation-has-many-through-integration.spec.ts
 // ---------------------------------------------------------------------------
 
-// userWithThrough re-uses the users table but declares a HasManyThrough relation, exercising the
-// ThroughRelations() escape hatch.
+// userWithThrough re-uses the users table but declares a HasManyThrough relation via the unified
+// Relations() entry point.
 type userWithThrough struct{}
 
 func (userWithThrough) TableName() string { return "users" }
 
-func (userWithThrough) ThroughRelations() map[string]contractsorm.ThroughRelation {
-	return map[string]contractsorm.ThroughRelation{
-		"Authors": {
-			Kind:           contractsorm.HasManyThrough,
+func (userWithThrough) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Authors": contractsorm.HasManyThrough{
 			Related:        &Author{},
 			Through:        &Book{},
 			FirstKey:       "user_id", // FK on Book pointing at User

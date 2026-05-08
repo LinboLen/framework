@@ -333,10 +333,9 @@ type userAuthorsThrough struct {
 
 func (userAuthorsThrough) TableName() string { return "users" }
 
-func (userAuthorsThrough) ThroughRelations() map[string]contractsorm.ThroughRelation {
-	return map[string]contractsorm.ThroughRelation{
-		"Authors": {
-			Kind:           contractsorm.HasManyThrough,
+func (userAuthorsThrough) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Authors": contractsorm.HasManyThrough{
 			Related:        &Author{},
 			Through:        &Book{},
 			FirstKey:       "user_id",
