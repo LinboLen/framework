@@ -135,12 +135,17 @@ func resolveRelation(db *gormio.DB, parent any, relation string) (*relationDescr
 // descriptorFromRelations resolves a relation declared via the parent's Relations() method.
 // Handles all 11 kinds. Returns OrmRelationNotFound when the parent doesn't implement the
 // interface or the relation name isn't in its map.
+//
+// Accepts Relations() declared with either a value receiver (`func (Foo) Relations()`) or a
+// pointer receiver (`func (*Foo) Relations()`). Models often mix the two — e.g. value receivers
+// for pure-metadata methods and pointer receivers for GORM lifecycle hooks — so the framework
+// looks up the interface on whichever form is addressable.
 func descriptorFromRelations(db *gormio.DB, parent any, parentTable, name string) (*relationDescriptor, error) {
-	holder, ok := unwrapPointer(parent).(contractsorm.ModelWithRelations)
+	relations, ok := tryGetRelations(parent)
 	if !ok {
 		return nil, errors.OrmRelationNotFound.Args(name, reflect.TypeOf(parent).String())
 	}
-	rel, ok := holder.Relations()[name]
+	rel, ok := relations[name]
 	if !ok {
 		return nil, errors.OrmRelationNotFound.Args(name, reflect.TypeOf(parent).String())
 	}
@@ -461,4 +466,41 @@ func resolveMorphValue(parent any, gormDefault string) string {
 // owner has an explicit registered alias before defaulting to its table.
 func resolveMorphAlias(model any) (string, bool) {
 	return morphmap.MorphValue(model)
+}
+
+// tryGetRelations returns the parent model's Relations() map regardless of whether the method is
+// declared with a value receiver (`func (Foo) Relations()`) or a pointer receiver (`func (*Foo)
+// Relations()`). Returns ok=false if neither form satisfies ModelWithRelations.
+//
+// Mirrors the dual-receiver detection in morphmap.tryMorphClass; both helpers exist because Go
+// doesn't pick a receiver style for users — and real-world models freely mix value and pointer
+// receivers across methods on the same struct.
+func tryGetRelations(parent any) (map[string]contractsorm.Relation, bool) {
+	// Direct interface satisfaction — covers the common case where parent is *Foo and Relations
+	// has a pointer receiver, *or* parent is *Foo and Relations has a value receiver (since
+	// pointer-to-T satisfies any value-receiver interface T).
+	if m, ok := parent.(contractsorm.ModelWithRelations); ok {
+		return m.Relations(), true
+	}
+	rv := reflect.ValueOf(parent)
+	switch rv.Kind() {
+	case reflect.Pointer:
+		if rv.IsNil() {
+			return nil, false
+		}
+		// Try the dereferenced value — covers value-receiver methods when parent is a pointer.
+		// (Already handled above, but keep the branch for completeness; falls through silently.)
+		if m, ok := rv.Elem().Interface().(contractsorm.ModelWithRelations); ok {
+			return m.Relations(), true
+		}
+	case reflect.Struct:
+		// parent is a value but Relations is on the pointer receiver — wrap in a fresh
+		// addressable pointer so the method set includes the pointer-receiver methods.
+		ptr := reflect.New(rv.Type())
+		ptr.Elem().Set(rv)
+		if m, ok := ptr.Interface().(contractsorm.ModelWithRelations); ok {
+			return m.Relations(), true
+		}
+	}
+	return nil, false
 }
