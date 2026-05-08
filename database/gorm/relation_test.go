@@ -48,17 +48,20 @@ func newStubGormDB(t *testing.T) *gormio.DB {
 type relUser struct {
 	ID      uint
 	Name    string
-	Books   []*relBook  `gorm:"foreignKey:UserID"`
-	Profile *relProfile `gorm:"foreignKey:UserID"`
-	Roles   []*relRole  `gorm:"many2many:rel_user_roles"`
+	Books   []*relBook  `gorm:"-"`
+	Profile *relProfile `gorm:"-"`
+	Roles   []*relRole  `gorm:"-"`
 	Houses  []*relHouse `gorm:"-"`
 	Logo    *relLogo    `gorm:"-"`
 }
 
-func (relUser) MorphRelations() map[string]contractsorm.MorphRelation {
-	return map[string]contractsorm.MorphRelation{
-		"Houses": {Kind: contractsorm.MorphMany, Related: &relHouse{}, Name: "houseable"},
-		"Logo":   {Kind: contractsorm.MorphOne, Related: &relLogo{}, Name: "logoable"},
+func (relUser) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Books":   {Kind: contractsorm.HasMany, Related: &relBook{}, ForeignKey: "user_id"},
+		"Profile": {Kind: contractsorm.HasOne, Related: &relProfile{}, ForeignKey: "user_id"},
+		"Roles":   {Kind: contractsorm.Many2Many, Related: &relRole{}, Table: "rel_user_roles"},
+		"Houses":  {Kind: contractsorm.MorphMany, Related: &relHouse{}, Name: "houseable"},
+		"Logo":    {Kind: contractsorm.MorphOne, Related: &relLogo{}, Name: "logoable"},
 	}
 }
 
@@ -67,7 +70,13 @@ type relBook struct {
 	Title    string
 	UserID   uint
 	AuthorID uint
-	Author   *relUser `gorm:"foreignKey:AuthorID"`
+	Author   *relUser `gorm:"-"`
+}
+
+func (relBook) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Author": {Kind: contractsorm.BelongsTo, Related: &relUser{}, ForeignKey: "author_id"},
+	}
 }
 
 type relProfile struct {
@@ -101,8 +110,8 @@ type relCountry struct {
 	Name string
 }
 
-func (relCountry) ThroughRelations() map[string]contractsorm.ThroughRelation {
-	return map[string]contractsorm.ThroughRelation{
+func (relCountry) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
 		"Posts": {
 			Kind:    contractsorm.HasManyThrough,
 			Related: &relPost{},
@@ -275,9 +284,12 @@ func TestResolveRelation_HasManyThrough(t *testing.T) {
 	assert.Equal(t, relKindHasManyThrough, desc.kind)
 	assert.Equal(t, "rel_posts", desc.relatedTable)
 	assert.Equal(t, "rel_users", desc.throughTable)
-	// defaultStr should fill empty keys with "id"
-	assert.Equal(t, "id", desc.firstKey)
-	assert.Equal(t, "id", desc.secondKey)
+	// Through default keys come from naming conventions:
+	//   firstKey  = singular(parentTable) + "_id"
+	//   secondKey = singular(throughTable) + "_id"
+	//   localKey / secondLocalKey default to "id".
+	assert.Equal(t, "rel_country_id", desc.firstKey)
+	assert.Equal(t, "rel_user_id", desc.secondKey)
 	assert.Equal(t, "id", desc.localKey)
 	assert.Equal(t, "id", desc.secondLocalKey)
 }
@@ -298,7 +310,7 @@ func TestResolveRelation_ThroughNotConfigured(t *testing.T) {
 func TestResolveRelation_ThroughBadKind(t *testing.T) {
 	db := newStubGormDB(t)
 	_, err := resolveRelation(db, &relCountry{}, "BadKind")
-	assert.True(t, errors.Is(err, errors.OrmRelationUnsupported))
+	assert.True(t, errors.Is(err, errors.OrmMorphRelationKindUnknown))
 }
 
 func TestResolveRelation_ThroughNotImplemented(t *testing.T) {
@@ -328,8 +340,8 @@ type morphImage struct {
 	Imageable     any `gorm:"-"`
 }
 
-func (morphImage) MorphRelations() map[string]contractsorm.MorphRelation {
-	return map[string]contractsorm.MorphRelation{
+func (morphImage) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
 		"Imageable": {Kind: contractsorm.MorphTo, Name: "imageable"},
 	}
 }
@@ -340,8 +352,8 @@ type morphPost struct {
 	Tags  []*morphTag `gorm:"-"`
 }
 
-func (morphPost) MorphRelations() map[string]contractsorm.MorphRelation {
-	return map[string]contractsorm.MorphRelation{
+func (morphPost) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
 		"Tags": {Kind: contractsorm.MorphToMany, Related: &morphTag{}, Name: "taggable"},
 	}
 }
@@ -352,24 +364,24 @@ type morphTag struct {
 	Posts []*morphPost `gorm:"-"`
 }
 
-func (morphTag) MorphRelations() map[string]contractsorm.MorphRelation {
-	return map[string]contractsorm.MorphRelation{
+func (morphTag) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
 		"Posts": {Kind: contractsorm.MorphedByMany, Related: &morphPost{}, Name: "taggable"},
 	}
 }
 
 type morphBadKind struct{}
 
-func (morphBadKind) MorphRelations() map[string]contractsorm.MorphRelation {
-	return map[string]contractsorm.MorphRelation{
+func (morphBadKind) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
 		"X": {Kind: "unknown"},
 	}
 }
 
 type morphMissingRelated struct{}
 
-func (morphMissingRelated) MorphRelations() map[string]contractsorm.MorphRelation {
-	return map[string]contractsorm.MorphRelation{
+func (morphMissingRelated) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
 		"X": {Kind: contractsorm.MorphMany, Name: "imageable"},
 	}
 }
@@ -423,7 +435,7 @@ func TestResolveRelation_MorphMissingRelated(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.OrmMorphRelationMissingField))
 }
 
-// --- Forbidden GORM polymorphic tag ---
+// --- Forbidden GORM relation tags ---
 
 type forbiddenPolymorphicParent struct {
 	ID     uint
@@ -436,8 +448,39 @@ type forbiddenPolymorphicChild struct {
 	HouseableType string
 }
 
+type forbiddenForeignKeyParent struct {
+	ID    uint
+	Books []*forbiddenForeignKeyChild `gorm:"foreignKey:ParentID"`
+}
+
+type forbiddenForeignKeyChild struct {
+	ID       uint
+	ParentID uint
+}
+
+type forbiddenMany2ManyParent struct {
+	ID    uint
+	Roles []*forbiddenMany2ManyChild `gorm:"many2many:parent_roles"`
+}
+
+type forbiddenMany2ManyChild struct {
+	ID uint
+}
+
 func TestResolveRelation_ForbidsPolymorphicTag(t *testing.T) {
 	db := newStubGormDB(t)
 	_, err := resolveRelation(db, &forbiddenPolymorphicParent{}, "Houses")
-	assert.True(t, errors.Is(err, errors.OrmPolymorphicTagForbidden))
+	assert.True(t, errors.Is(err, errors.OrmRelationTagForbidden))
+}
+
+func TestResolveRelation_ForbidsForeignKeyTag(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &forbiddenForeignKeyParent{}, "Books")
+	assert.True(t, errors.Is(err, errors.OrmRelationTagForbidden))
+}
+
+func TestResolveRelation_ForbidsMany2ManyTag(t *testing.T) {
+	db := newStubGormDB(t)
+	_, err := resolveRelation(db, &forbiddenMany2ManyParent{}, "Roles")
+	assert.True(t, errors.Is(err, errors.OrmRelationTagForbidden))
 }

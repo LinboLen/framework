@@ -115,177 +115,154 @@ type RelationCount struct {
 	Callback RelationCallback
 }
 
-// ThroughRelationKind enumerates the supported "through" relation flavours. These have no
-// equivalent in GORM's struct-tag schema, so they are declared via ModelWithThroughRelations.
-type ThroughRelationKind string
+// RelationKind enumerates every supported relationship flavour. All relations are declared via
+// a single ModelWithRelations interface; GORM relation struct tags (`foreignKey:`, `references:`,
+// `many2many:`, `polymorphic:`) are forbidden because they couldn't express the full surface and
+// because spreading metadata across two declaration mechanisms made model definitions hard to
+// audit.
+type RelationKind string
 
 const (
-	// HasOneThrough corresponds to the HasOneThrough relation.
-	HasOneThrough ThroughRelationKind = "hasOneThrough"
-	// HasManyThrough corresponds to the HasManyThrough relation.
-	HasManyThrough ThroughRelationKind = "hasManyThrough"
+	// HasOne — the related row holds a foreign key referencing this model.
+	HasOne RelationKind = "hasOne"
+	// HasMany — multi-result HasOne.
+	HasMany RelationKind = "hasMany"
+	// BelongsTo — this model holds a foreign key referencing the related row.
+	BelongsTo RelationKind = "belongsTo"
+	// Many2Many — through a pivot table whose rows pair this model and the related.
+	Many2Many RelationKind = "many2Many"
+	// MorphOne — the related row holds <Name>_id and <Name>_type referencing one of several
+	// possible parent kinds.
+	MorphOne RelationKind = "morphOne"
+	// MorphMany — multi-result MorphOne.
+	MorphMany RelationKind = "morphMany"
+	// MorphTo — this model holds <Name>_id + <Name>_type and resolves to one of several parent
+	// kinds via the morph map registry.
+	MorphTo RelationKind = "morphTo"
+	// MorphToMany — through a pivot that carries <Name>_id + <Name>_type plus a related FK.
+	MorphToMany RelationKind = "morphToMany"
+	// MorphedByMany — the inverse side of MorphToMany.
+	MorphedByMany RelationKind = "morphedByMany"
+	// HasOneThrough — like HasOne but reached through an intermediate ("through") table.
+	HasOneThrough RelationKind = "hasOneThrough"
+	// HasManyThrough — multi-result HasOneThrough.
+	HasManyThrough RelationKind = "hasManyThrough"
 )
 
-// ThroughRelation describes a HasOneThrough / HasManyThrough relationship that GORM cannot infer
-// from struct tags. A model declares its through relations by implementing
-// ModelWithThroughRelations. Field semantics match the upstream HasManyThrough constructor:
+// Relation describes one relationship. Field relevance depends on Kind — fields not relevant to
+// the chosen kind are ignored. When optional fields are left zero, the framework fills them
+// using snake_case naming conventions (singular table name + "_id", etc.).
 //
-//	new HasManyThrough($query, $farParent, $throughParent, $firstKey, $secondKey, $localKey, $secondLocalKey)
+// Required fields per kind:
 //
-// Example: Country has many Posts through User.
+//   - HasOne / HasMany / BelongsTo / Many2Many:   Related
+//   - MorphOne / MorphMany / MorphToMany / MorphedByMany: Related, Name
+//   - MorphTo:                                    Name (Related is resolved per-row via morph map)
+//   - HasOneThrough / HasManyThrough:             Related, Through
 //
-//	type Country struct{ ... }
+// Default values for optional fields:
 //
-//	func (Country) ThroughRelations() map[string]orm.ThroughRelation {
-//	    return map[string]orm.ThroughRelation{
-//	        "Posts": {
-//	            Kind:           orm.HasManyThrough,
-//	            Related:        &Post{},
-//	            Through:        &User{},
-//	            FirstKey:       "country_id", // foreign key on Through pointing at Parent (Country)
-//	            SecondKey:      "user_id",    // foreign key on Related pointing at Through (User)
-//	            LocalKey:       "id",         // local primary key on Parent
-//	            SecondLocalKey: "id",         // local primary key on Through
-//	        },
+//   - LocalKey / ParentKey / OwnerKey / RelatedKey / SecondLocalKey: "id"
+//   - HasOne / HasMany ForeignKey:        singular(parentTable) + "_id"
+//   - BelongsTo ForeignKey:               singular(relatedTable) + "_id"
+//   - Many2Many Table:                    alphabetical singular pair, e.g. "post_tag"
+//   - Many2Many ForeignPivotKey:          singular(parentTable) + "_id"
+//   - Many2Many RelatedPivotKey:          singular(relatedTable) + "_id"
+//   - MorphOne / MorphMany / MorphTo TypeColumn: Name + "_type"
+//   - MorphOne / MorphMany / MorphTo IDColumn:   Name + "_id"
+//   - MorphToMany / MorphedByMany Table:         pluralize(Name)  e.g. "taggables"
+//   - MorphToMany / MorphedByMany ForeignPivotKey: Name + "_id"
+//   - HasOneThrough / HasManyThrough FirstKey:   singular(parentTable) + "_id"
+//   - HasOneThrough / HasManyThrough SecondKey:  singular(throughTable) + "_id"
+//
+// Example — a single User declaration:
+//
+//	func (User) Relations() map[string]orm.Relation {
+//	    return map[string]orm.Relation{
+//	        "Books":  {Kind: orm.HasMany,        Related: &Book{}},
+//	        "Roles":  {Kind: orm.Many2Many,      Related: &Role{}, Table: "user_roles"},
+//	        "Houses": {Kind: orm.MorphMany,      Related: &House{}, Name: "houseable"},
+//	        "Posts":  {Kind: orm.HasManyThrough, Related: &Post{},  Through: &Account{}},
 //	    }
 //	}
-type ThroughRelation struct {
-	// Kind selects between HasOneThrough and HasManyThrough.
-	Kind ThroughRelationKind
-	// Related is a sample instance of the related model (e.g. &Post{}).
+//
+// All relation fields on the model struct must be tagged `gorm:"-"` so GORM doesn't try to
+// auto-resolve them from struct tags.
+type Relation struct {
+	// Kind selects the relation flavour. Required for every entry.
+	Kind RelationKind
+
+	// Related is a sample instance of the related model (e.g. &Book{}). Required for all
+	// kinds except MorphTo.
 	Related any
-	// Through is a sample instance of the intermediate model (e.g. &User{}).
-	Through any
-	// FirstKey is the foreign key on Through that references Parent's LocalKey.
-	FirstKey string
-	// SecondKey is the foreign key on Related that references Through's SecondLocalKey.
-	SecondKey string
-	// LocalKey is the local primary key on Parent (defaults to "id" when empty).
+
+	// Name is the polymorphic name (e.g. "imageable", "taggable"). Required for the five
+	// polymorphic kinds; ignored otherwise.
+	Name string
+
+	// ForeignKey is the column on the related table for HasOne / HasMany, or on this table
+	// for BelongsTo. Defaults are described above.
+	ForeignKey string
+
+	// LocalKey is the column on the parent referenced by ForeignKey. Defaults to "id".
 	LocalKey string
-	// SecondLocalKey is the local primary key on Through (defaults to "id" when empty).
+
+	// OwnerKey is the column on the related referenced by ForeignKey for BelongsTo / MorphTo.
+	// Defaults to "id".
+	OwnerKey string
+
+	// TypeColumn is the polymorphic type column. Defaults to <Name> + "_type".
+	TypeColumn string
+
+	// IDColumn is the polymorphic id column. Defaults to <Name> + "_id".
+	IDColumn string
+
+	// Table is the pivot table for Many2Many / MorphToMany / MorphedByMany. Default rules
+	// described above.
+	Table string
+
+	// ForeignPivotKey is the pivot column referencing the parent (or related, for inverse
+	// MorphedByMany). Defaults described above.
+	ForeignPivotKey string
+
+	// RelatedPivotKey is the pivot column referencing the related (or parent, for inverse).
+	// Defaults to singular(relatedTable) + "_id".
+	RelatedPivotKey string
+
+	// ParentKey is the column on the parent referenced by ForeignPivotKey for the M2M family.
+	// Defaults to "id".
+	ParentKey string
+
+	// RelatedKey is the column on the related referenced by RelatedPivotKey for the M2M family.
+	// Defaults to "id".
+	RelatedKey string
+
+	// PivotColumns are extra pivot columns to surface on read.
+	PivotColumns []string
+
+	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table.
+	PivotTimestamps bool
+
+	// Through is the intermediate model for HasOneThrough / HasManyThrough.
+	Through any
+
+	// FirstKey is the FK on the through table pointing at parent. Default:
+	// singular(parentTable) + "_id".
+	FirstKey string
+
+	// SecondKey is the FK on the related table pointing at through. Default:
+	// singular(throughTable) + "_id".
+	SecondKey string
+
+	// SecondLocalKey is the PK on the through table referenced by SecondKey. Defaults to "id".
 	SecondLocalKey string
 }
 
-// ModelWithThroughRelations is implemented by models that declare HasOneThrough / HasManyThrough
-// relationships. The map is keyed by the relation name used at call sites (e.g. q.Has("Posts")).
-// This is the only way Goravel can resolve through-relations because GORM has no struct-tag
-// representation of them.
-type ModelWithThroughRelations interface {
-	ThroughRelations() map[string]ThroughRelation
+// ModelWithRelations is implemented by every model that declares relationships. The single map
+// returned by Relations() is the only place relations are declared. GORM relation struct tags
+// (`foreignKey:`, `references:`, `many2many:`, `polymorphic:`) are forbidden — fields that hold
+// related rows must be tagged `gorm:"-"`.
+type ModelWithRelations interface {
+	Relations() map[string]Relation
 }
 
-// MorphRelationKind enumerates the five polymorphic relation kinds. All polymorphic relations in
-// Goravel are declared via ModelWithMorphRelations; GORM `polymorphic:` struct tags are
-// forbidden because they cannot express the inverse direction (MorphTo) and the polymorphic
-// many-to-many flavours (MorphToMany / MorphedByMany).
-type MorphRelationKind string
-
-const (
-	// MorphOne is the single-result outbound polymorphic relation. The related model holds
-	// `<Name>_id` and `<Name>_type` columns referencing the parent.
-	MorphOne MorphRelationKind = "morphOne"
-	// MorphMany is the multi-result outbound polymorphic relation.
-	MorphMany MorphRelationKind = "morphMany"
-	// MorphTo is the inverse polymorphic relation: the model holds `<Name>_id` + `<Name>_type`
-	// and resolves to one of several parent types via the morph map registry.
-	MorphTo MorphRelationKind = "morphTo"
-	// MorphToMany is a polymorphic many-to-many through a pivot table that carries
-	// `<Name>_id` + `<Name>_type` plus the parent's foreign key.
-	MorphToMany MorphRelationKind = "morphToMany"
-	// MorphedByMany is the inverse of MorphToMany — the side reached *through* a polymorphic
-	// many-to-many. Same pivot, but the morph value pins on the related side.
-	MorphedByMany MorphRelationKind = "morphedByMany"
-)
-
-// MorphRelation describes one polymorphic relationship. Field relevance depends on Kind:
-//
-//	MorphOne / MorphMany:        Related, Name, TypeColumn, IDColumn, LocalKey
-//	MorphTo:                     Name, TypeColumn, IDColumn, OwnerKey
-//	MorphToMany / MorphedByMany: Related, Name, Table, ForeignPivotKey, RelatedPivotKey,
-//	                             ParentKey, RelatedKey, PivotColumns, PivotTimestamps
-//
-// Most fields default sensibly when left zero — see field-level docstrings for the exact rule.
-//
-// Example — outbound MorphMany declared on the parent:
-//
-//	func (Post) MorphRelations() map[string]orm.MorphRelation {
-//	    return map[string]orm.MorphRelation{
-//	        "Images": {Kind: orm.MorphMany, Related: &Image{}, Name: "imageable"},
-//	    }
-//	}
-//
-// Example — inverse MorphTo declared on the child:
-//
-//	type Image struct {
-//	    ImageableID   uint
-//	    ImageableType string
-//	    Imageable     any  // populated by the eager loader with *Post / *Video / etc.
-//	}
-//
-//	func (Image) MorphRelations() map[string]orm.MorphRelation {
-//	    return map[string]orm.MorphRelation{
-//	        "Imageable": {Kind: orm.MorphTo, Name: "imageable"},
-//	    }
-//	}
-type MorphRelation struct {
-	// Kind selects the polymorphic flavour. Required.
-	Kind MorphRelationKind
-
-	// Related is a sample instance of the related model (e.g. &Image{}). Required for every
-	// kind except MorphTo, where the related type is resolved per-row via the morph map.
-	Related any
-
-	// Name is the polymorphic name (e.g. "imageable", "taggable"). Required. Used to derive
-	// default column names: TypeColumn defaults to "<Name>_type", IDColumn to "<Name>_id",
-	// and pivot fields when zero.
-	Name string
-
-	// TypeColumn is the morph type column on the related table (or pivot, for MorphToMany).
-	// Defaults to "<Name>_type" when empty.
-	TypeColumn string
-
-	// IDColumn is the morph id column on the related table. Defaults to "<Name>_id" when empty.
-	IDColumn string
-
-	// LocalKey is the parent column that the related's *_id references. Defaults to "id".
-	// Used by MorphOne / MorphMany.
-	LocalKey string
-
-	// OwnerKey is the related-table column that *_id references. Defaults to "id".
-	// Used by MorphTo.
-	OwnerKey string
-
-	// Table is the pivot table name for MorphToMany / MorphedByMany. When empty defaults to
-	// the plural snake-case of Name (e.g. "taggable" -> "taggables").
-	Table string
-
-	// ForeignPivotKey is the pivot column referencing the parent (or, for MorphedByMany, the
-	// related). Defaults to "<Name>_id".
-	ForeignPivotKey string
-
-	// RelatedPivotKey is the pivot column referencing the related (or, for MorphedByMany, the
-	// parent). Defaults to "<related-table-singular>_id".
-	RelatedPivotKey string
-
-	// ParentKey is the parent column referenced by ForeignPivotKey. Defaults to "id".
-	ParentKey string
-
-	// RelatedKey is the related column referenced by RelatedPivotKey. Defaults to "id".
-	RelatedKey string
-
-	// PivotColumns are extra pivot columns to surface on loaded results.
-	PivotColumns []string
-
-	// PivotTimestamps, when true, expects created_at / updated_at columns on the pivot.
-	PivotTimestamps bool
-}
-
-// ModelWithMorphRelations is implemented by models that declare polymorphic relationships. The
-// map is keyed by the relation name used at call sites (e.g. q.With("Imageable")).
-//
-// This is the *only* way Goravel resolves polymorphic relationships. The corresponding GORM
-// struct-tag mechanism (`gorm:"polymorphic:..."`) is forbidden because it cannot express the
-// inverse direction or polymorphic many-to-many flavours.
-type ModelWithMorphRelations interface {
-	MorphRelations() map[string]MorphRelation
-}
