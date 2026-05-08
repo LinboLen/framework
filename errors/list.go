@@ -185,6 +185,8 @@ var (
 	OrmMorphRelationMissingField    = New("polymorphic relation %q on model %s is missing required field %q")
 	OrmMorphTypeUnknown             = New("polymorphic type %q is not registered in the morph map; call orm.MorphMap or implement MorphClass() on the target model")
 	OrmPolymorphicTagForbidden      = New("polymorphic GORM tag on field %q of model %s is forbidden; declare the relation via the MorphRelations() method instead")
+	OrmNewRelationParentNotPointer  = New("NewRelation: parent must be a non-nil pointer to a struct, got %T")
+	OrmRelationKindNotSupported     = New("operation %q is not supported on relation %q (kind %q)")
 	OrmEagerLoadInvalidArgument     = New("invalid argument %T passed to With; expected string, []string, []any, map[string]orm.RelationCallback, or string + callback")
 	OrmEagerLoadCannotAssign        = New("cannot assign eager-loaded rows to field %q on model %s; field must be *Model, []*Model or []Model")
 	OrmEagerLoadEmptyRelation       = New("With received an empty relation name")

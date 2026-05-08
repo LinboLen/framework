@@ -231,3 +231,213 @@ Manual sanity: spin up the mysql test container per `tests/` README, define `Pos
 
 - **Cross-connection morph types**. If a registered alias points at a model whose `Connection()` differs from the parent's, the loader must dispatch on each model's connection (mirroring fedaco at `morph-to.ts:188`). v1 should at least detect and error clearly via `OrmMorphCrossConnection`; full support can land in a follow-up.
 - **Pivot table for MorphToMany**. GORM cannot describe it via tags, and `JoinTable` registration via `db.SetupJoinTable(...)` won't work since we don't go through GORM associations. We declare the pivot as a plain `Table` string in `MorphToManyRelation.Table` and never parse it as a model — same approach the framework already uses for ad-hoc joins.
+
+---
+
+# Follow-up: `NewRelation` + relation write operations
+
+## Context
+
+Phases 1–3 above ship the static side of relationships: declaration (`MorphRelations()`, `ThroughRelations()`), eager loading (`With` / `Load`), and existence queries (`Has` / `WhereHas*`). They cover the common request paths but leave two gaps that fedaco fills.
+
+**Gap 1 — ad-hoc relation query.** Given a loaded parent and a relation name, get a `Query` already pre-scoped to "the related rows belonging to this parent". Without this, callers retype the FK/morph filters by hand:
+
+```go
+// Today: caller knows the columns
+facades.Orm().Query().
+    Where("imageable_id", post.ID).
+    Where("imageable_type", "post").     // ← have to know the morph alias
+    Where("status", "approved").
+    Get(&images)
+```
+
+**Gap 2 — relation-aware writes.** Insert a child with the FK auto-filled, set/clear a BelongsTo or MorphTo, attach/detach pivot rows. Today the caller has to compute the FK and morph_type manually and either build raw SQL or chain `db.Where(...).Create(...)`-style calls — error-prone, especially for `MorphTo` where the morph alias has to be resolved against the morph map.
+
+### Design constraint: Goravel is metadata-only — no Relation object
+
+This is a hard constraint observed in the existing code. Look at how the framework treats relationships today:
+
+- `relationDescriptor` (`database/gorm/relation.go:44-72`) is **internal** — never crosses a contract boundary.
+- All per-kind logic (`loadHasOneOrMany`, `loadMorphTo`, `compileExistenceSubquery`, `applyOneOfManyJoin`) lives as methods on `*Query`, **not** on a Relation type.
+- The user-facing surface is `Query.With()` / `Query.Load()` / `Query.Has()` — operations are invoked on `Query`, the relation name is just a string parameter, and metadata is consulted internally.
+- `MorphRelations()` and `ThroughRelations()` are declarative metadata hooks, not factories that return a Relation object.
+
+Importing fedaco's `Relation` class hierarchy (a query-builder-like object that also carries `attach`/`detach`/`save`) would split the framework into two abstractions (`Query` and `Relation`) — that's a step away from the established style.
+
+A second observation that nails this down: **fedaco's write methods do not consult query state.** Verified at `relations/has-one-or-many.ts:176-179` — `save(model)` reads only `parent.GetAttribute(parentKey)` and calls `model.Save()`; the chain's `where(...)` is silently ignored. Same at `concerns/interacts-with-pivot-table.ts:338-348` for `_baseAttachRecord`. So even in fedaco a chain like `.NewRelation('comments').Where('foo', val).Save()` would drop the `Where`. Treating writes as chainable on a Relation object is misleading; they're independent SQL paths.
+
+→ Both gaps should be filled by **top-level entrypoints on `Orm`** that consult metadata internally. No Relation interface, no Relation object — same pattern as `loadOneRelation` / `applyExistence`.
+
+## Proposed change
+
+### Surface
+
+Add to `contracts/database/orm/orm.go`:
+
+```go
+type Orm interface {
+    // ... existing methods ...
+
+    // NewRelation returns a Query pre-scoped to the related rows for the given parent and
+    // relation name. Caller can chain Where / OrderBy / Get / First / Count / etc. on it.
+    // parent must be a non-nil pointer to a struct.
+    //
+    // Mirrors fedaco's model.NewRelation('foo') for the read path.
+    // Write operations (save, attach, detach, etc.) are not chained off this Query — see the
+    // dedicated Save / Associate / Attach / Detach / Sync / Toggle methods below.
+    NewRelation(parent any, relation string) Query
+
+    // --- HasOne / HasMany / MorphOne / MorphMany ---
+
+    // Save inserts or updates child as a member of parent's relation. Sets the foreign key (and
+    // morph_type for polymorphic) on child from parent's local key, then persists child.
+    Save(parent any, relation string, child any) error
+    // SaveMany is the slice form of Save.
+    SaveMany(parent any, relation string, children any) error
+
+    // --- BelongsTo / MorphTo ---
+
+    // Associate sets parent's foreign key (and morph_type for MorphTo) so it points at the given
+    // owner, then persists parent. The owner must be a saved model.
+    Associate(parent any, relation string, owner any) error
+    // Dissociate clears parent's foreign key (and morph_type for MorphTo) and persists parent.
+    Dissociate(parent any, relation string) error
+
+    // --- Many2Many / MorphToMany / MorphedByMany ---
+
+    // Attach inserts pivot rows linking parent to each id in ids. For polymorphic pivots the
+    // morph_type column is filled from the parent's morph value. ids may be either a slice of
+    // scalar ids or a map[any]map[string]any of id -> per-row pivot attributes.
+    Attach(parent any, relation string, ids any) error
+    // Detach removes pivot rows linking parent to the given ids. Pass nil ids to remove all.
+    Detach(parent any, relation string, ids ...any) error
+    // Sync replaces parent's pivot rows so they exactly match ids: detaches missing entries,
+    // attaches new ones, leaves existing untouched. Returns counts of attached/detached/updated
+    // via the result struct.
+    Sync(parent any, relation string, ids any) (*db.SyncResult, error)
+    // SyncWithoutDetaching is Sync minus the detach step — adds missing entries only.
+    SyncWithoutDetaching(parent any, relation string, ids any) (*db.SyncResult, error)
+    // Toggle attaches missing entries, detaches existing ones.
+    Toggle(parent any, relation string, ids any) (*db.SyncResult, error)
+    // UpdateExistingPivot updates pivot columns for an already-attached id.
+    UpdateExistingPivot(parent any, relation string, id any, attrs map[string]any) error
+}
+```
+
+`db.SyncResult`: `{ Attached, Detached, Updated []any }` — a small new contract type alongside `db.Result`.
+
+### Per-kind dispatch
+
+Each top-level method is `parent any, relation string` plus operation args. Internal flow:
+
+```
+1. resolveRelation(r.instance, parent, relation) → desc
+2. switch desc.kind
+3. call kind-specific implementation, or error with OrmRelationKindNotSupported{op, kind}
+```
+
+| Method | Supported kinds | Behaviour |
+|---|---|---|
+| `NewRelation` | All | Returns Query with kind-specific WHERE / JOIN pre-applied (table below). |
+| `Save` / `SaveMany` | HasOne, HasMany, MorphOne, MorphMany | Set FK (`<local_key>` → `<id_col>`); for morph also set `<type_col>` to `desc.morphValue`. Then persist via existing `Query.Save`. |
+| `Associate` | BelongsTo, MorphTo | Set parent's FK column to owner's PK; for MorphTo also set parent's `<type_col>` to `morphmap.MorphValue(owner)` (error `OrmMorphTypeUnknown` if unregistered). Persist parent. |
+| `Dissociate` | BelongsTo, MorphTo | Null FK (and `<type_col>` for MorphTo). Persist. |
+| `Attach` | Many2Many, MorphToMany, MorphedByMany | INSERT pivot rows. For morph variants fill `<type_col>` with `desc.morphValue`. Skip ids that already have a pivot row (cheap pre-check via WHERE IN). |
+| `Detach` | Many2Many, MorphToMany, MorphedByMany | DELETE matching pivot rows. With nil ids, delete all rows for the parent (and morph type). |
+| `Sync` / `SyncWithoutDetaching` / `Toggle` | Many2Many, MorphToMany, MorphedByMany | Read current pivot rows for parent (+ morph type filter), diff against ids, run INSERT / DELETE accordingly. |
+| `UpdateExistingPivot` | Many2Many, MorphToMany, MorphedByMany | UPDATE pivot WHERE pivot.parent_fk = parent.pk AND pivot.related_fk = id (+ morph type). |
+
+`HasOneThrough` / `HasManyThrough` are **read-only** for both `NewRelation` and writes — calling `Save` / `Attach` / etc. on them errors with `OrmRelationKindNotSupported`.
+
+### `NewRelation` — read path per kind
+
+| Kind | Returned `Query` shape |
+|---|---|
+| HasOne / HasMany | `Query().Model(desc.relatedModel).Where("<id_col>", parent.<local_key>)` |
+| BelongsTo | `Query().Model(desc.relatedModel).Where("<owner_key>", parent.<fk_col>)` |
+| MorphOne / MorphMany | HasMany shape + `Where("<type_col>", desc.morphValue)` |
+| MorphTo | Read parent's `<type_col>` and `<id_col>`. Resolve type via `morphmap.Find`; on miss return a guarded Query that yields no rows (`Where(raw, "1=0")`) and a documented `OrmMorphTypeUnknown` companion error returned via `Query.AddError`. On hit: `Query().Model(<resolved>).Where("<owner_key>", parent.<id_col>)`. |
+| Many2Many | `Query().Table(desc.relatedTable).Joins("INNER JOIN <pivot> ON <related>.pk = <pivot>.related_fk").Where("<pivot>.<parent_fk>", parent.<pk>)` |
+| MorphToMany / MorphedByMany | Many2Many shape + `Where("<pivot>.<type_col>", desc.morphValue)` |
+| HasOneThrough / HasManyThrough | `Query().Table(desc.relatedTable).Joins("INNER JOIN <through> ON ...").Where("<through>.<first_key>", parent.<local_key>)` |
+
+The Query returned has `Model(...)` set so subsequent unqualified `Where("col", v)` calls default to the related table's column space.
+
+### Edge cases
+
+- **Zero-valued FK on parent**: `image.ImageableID == 0` → returned Query's WHERE evaluates to `WHERE id = 0`; caller sees `OrmRecordNotFound` from `First` or `Count() == 0`. Same as fedaco.
+- **MorphTo with empty `<type_col>` on parent**: Query is guarded with `Where(raw, "1=0")` and the parent's `*_id` is reported via `Query.AddError(OrmMorphTypeUnknown)` so `Get`/`First` returns no rows without a round-trip.
+- **`Save` with a slice through `SaveMany`**: iterates and calls `Save` per element; bails on first error.
+- **`Sync` returning detail counts**: callers who don't care can ignore the `*db.SyncResult` return value.
+- **`Attach` when a pivot row already exists**: skipped (no duplicate key error). Documented behaviour.
+- **Cross-connection writes (MorphTo)**: if `morphmap.Find(alias)` returns a model whose `Connection()` differs from the parent's, error with `OrmMorphCrossConnection` (already on the polymorphic-plan risks list).
+- **Nested relations** (`"Books.Author"`): out of scope. Callers chain manually.
+- **Slice of parents**: out of scope. All write methods take a single parent.
+
+### Critical files
+
+| File | Change |
+|---|---|
+| `contracts/database/orm/orm.go` | + 11 new methods on `Orm` (`NewRelation`, `Save`, `SaveMany`, `Associate`, `Dissociate`, `Attach`, `Detach`, `Sync`, `SyncWithoutDetaching`, `Toggle`, `UpdateExistingPivot`). |
+| `contracts/database/db/result.go` (or similar location) | + `SyncResult` struct. |
+| `database/orm/orm.go` | Implement the 11 methods on the concrete `Orm`; each delegates to a helper on the gorm `Query` (`r.Query().(*Query).<helper>(parent, relation, ...)`). |
+| `database/gorm/new_relation.go` (new) | `(r *Query) newRelationQuery(parent, relation) Query` — read path. Switch on `desc.kind`, build the WHERE / JOIN. |
+| `database/gorm/relation_writes.go` (new) | `(r *Query) saveThroughRelation(...)`, `associateThroughRelation(...)`, `attachThroughRelation(...)`, `detachThroughRelation(...)`, `syncThroughRelation(...)`. Each is a kind-switch dispatcher that errors on unsupported kinds. |
+| `errors/list.go` | + `OrmNewRelationParentNotPointer`, `OrmRelationKindNotSupported` ("operation %q is not supported on relation %q (kind %q)"), `OrmMorphCrossConnection`. |
+| `mocks/database/orm/Orm.go` | Regenerate via `go tool mockery`. |
+
+### Reuse — existing functions
+
+- `resolveRelation` (`database/gorm/relation.go:75`) — descriptor lookup for every kind.
+- `parseGormSchema` + `field.ValueOf` (`database/gorm/eager_loader.go:828-836`) — read parent's column values.
+- `morphmap.MorphValue` / `morphmap.Find` (`database/orm/morphmap/morphmap.go`) — alias resolution for morph operations.
+- `compileExistenceSubquery` per-kind branches (`database/gorm/queries_relationships.go:521-657`) — same JOIN/WHERE shapes lifted into helpers.
+- `Query.Save` / `Query.Update` / `Query.Delete` — final persistence step for each write operation.
+
+### Verification
+
+```bash
+go test ./database/gorm/ -run "TestNewRelation|TestSaveThroughRelation|TestAttachThroughRelation|TestSyncThroughRelation"
+go test ./database/orm/...
+go tool mockery && go build ./...
+go test ./tests/...   # integration against mysql/postgres/sqlite/sqlserver
+```
+
+Manual sanity (one example per write family):
+
+```go
+// HasMany Save: comment.PostID auto-filled, INSERT comment.
+err := facades.Orm().Save(&post, "Comments", &comment)
+
+// MorphTo Associate: image.ImageableID = post.ID, image.ImageableType = "post"; UPDATE image.
+err := facades.Orm().Associate(&image, "Imageable", &post)
+
+// MorphToMany Attach: INSERT INTO taggables (taggable_id, taggable_type, tag_id) VALUES (post.ID, 'post', ?), ...
+err := facades.Orm().Attach(&post, "Tags", []any{1, 2, 3})
+
+// Detach all: DELETE FROM taggables WHERE taggable_id = post.ID AND taggable_type = 'post'
+err := facades.Orm().Detach(&post, "Tags")
+```
+
+### Sequencing
+
+1. **Step 1** — `NewRelation` (read path) for all kinds. Tests. *Medium.*
+2. **Step 2** — `Save` / `SaveMany` for HasOne / HasMany / MorphOne / MorphMany. Tests. *Small.*
+3. **Step 3** — `Associate` / `Dissociate` for BelongsTo / MorphTo. Tests. *Small.*
+4. **Step 4** — `Attach` / `Detach` for M2M variants. Tests. *Medium.*
+5. **Step 5** — `Sync` / `SyncWithoutDetaching` / `Toggle` / `UpdateExistingPivot`. Tests. *Medium.*
+
+Each step is independent; pause anywhere if priorities shift.
+
+## Resolved decisions for this follow-up
+
+- **No Relation interface / no Relation object.** All operations are top-level methods on `Orm`. Matches Goravel's existing metadata-only design. Verified against `loadOneRelation` / `applyExistence` precedent.
+- **NewRelation returns Query, not Relation.** Read path only. Fedaco's `Relation` chain methods that mutate query state (`Where`, `OrderBy`, `Limit`) all funnel into Query in our equivalent; methods that don't consult query state (`save`, `attach`, etc.) become independent Orm methods.
+- **`Save`, `Attach`, etc. ignore any pre-existing Query state.** Same as fedaco. Documented explicitly in each method's docstring.
+- **HasOneThrough / HasManyThrough are read-only.** No `Save` / `Attach` semantics. Calling write methods errors with `OrmRelationKindNotSupported`.
+
+## Open questions
+
+- Should the M2M shape include `withPivot` columns by default? Recommend **no** in v1; keep the result strictly the related table. Add a follow-up `WithPivot(...)` later when there's a real ask.
+- `Sync`/`Toggle` return type — `*db.SyncResult` or just `error`? Recommend the result struct for parity with Eloquent's `sync()` return. Cheap to add now, hard to add later without breaking callers.
+- `Attach` accepting `map[any]map[string]any` for per-row pivot attributes — keep in v1 or defer to a separate `AttachWithAttributes`? Recommend keep — same ergonomics as Eloquent and trivial to implement (write a different INSERT row when the map form is detected).

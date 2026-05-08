@@ -21,6 +21,58 @@ type Orm interface {
 	DatabaseName() string
 	// Name gets the current connection name.
 	Name() string
+	// NewRelation returns a Query pre-scoped to the related rows for the given parent and
+	// relation name. parent must be a non-nil pointer to a struct. The returned Query is a fresh
+	// chain — call any of Where / OrderBy / Get / First / Count / etc. on it.
+	//
+	// Per-kind shape:
+	//   - HasOne / HasMany:                     Query().Model(related).Where("<id_col>", parent.<local_key>)
+	//   - BelongsTo:                            Query().Model(related).Where("<owner_key>", parent.<fk_col>)
+	//   - MorphOne / MorphMany:                 HasMany shape + Where("<type_col>", desc.morphValue)
+	//   - MorphTo:                              type resolved from morph map; Query().Model(<resolved>).Where("<owner_key>", parent.<id_col>)
+	//   - Many2Many / MorphToMany / MorphedByMany: Query().Table(related).Joins("INNER JOIN <pivot> ON ...").Where("<pivot>.<parent_fk>", parent.<pk>)
+	//   - HasOneThrough / HasManyThrough:       Query().Table(related).Joins("INNER JOIN <through> ON ...").Where("<through>.<first_key>", parent.<local_key>)
+	//
+	// Mirrors fedaco's model.NewRelation('foo') for the read path. Write operations
+	// (Save, Associate, Attach, Detach, Sync, etc.) are not chained off this Query — see the
+	// dedicated top-level methods below.
+	NewRelation(parent any, relation string) Query
+	// Save inserts or updates child as a member of parent's relation. Sets child's foreign key
+	// (and morph_type for MorphOne/MorphMany) from parent's local key, then persists child.
+	// Supported kinds: HasOne, HasMany, MorphOne, MorphMany. Errors with
+	// OrmRelationKindNotSupported on other kinds.
+	Save(parent any, relation string, child any) error
+	// SaveMany is the slice form of Save. children must be a slice or a pointer to a slice;
+	// iterates and calls Save per element, bailing on the first error.
+	SaveMany(parent any, relation string, children any) error
+	// Associate sets parent's foreign key column (and morph_type for MorphTo) so it points at
+	// owner, then persists parent. Supported kinds: BelongsTo, MorphTo. Errors with
+	// OrmRelationKindNotSupported on other kinds. owner must be a non-nil pointer to a struct.
+	Associate(parent any, relation string, owner any) error
+	// Dissociate clears parent's foreign key column (and morph_type for MorphTo) and persists
+	// parent. Supported kinds: BelongsTo, MorphTo.
+	Dissociate(parent any, relation string) error
+	// Attach inserts pivot rows linking parent to each id in ids. For polymorphic pivots the
+	// morph_type column is filled from the parent's morph value. Skips ids that already have a
+	// pivot row. Supported kinds: Many2Many, MorphToMany, MorphedByMany.
+	Attach(parent any, relation string, ids []any) error
+	// AttachWithPivot is Attach with per-row pivot column values. The map key is the related
+	// id; the map value is the column-name-to-value map applied to that pivot row.
+	AttachWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) error
+	// Detach removes pivot rows linking parent to the given ids. With nil ids, removes all
+	// pivot rows for parent (and morph type, for polymorphic). Supported kinds: Many2Many,
+	// MorphToMany, MorphedByMany. Returns the number of rows removed.
+	Detach(parent any, relation string, ids ...any) (int64, error)
+	// Sync replaces parent's pivot rows so they exactly match ids: detaches missing entries,
+	// attaches new ones, leaves existing untouched. Returns counts of attached / detached /
+	// updated ids. Supported kinds: Many2Many, MorphToMany, MorphedByMany.
+	Sync(parent any, relation string, ids []any) (*db.SyncResult, error)
+	// SyncWithoutDetaching is Sync minus the detach step — adds missing entries only.
+	SyncWithoutDetaching(parent any, relation string, ids []any) (*db.SyncResult, error)
+	// Toggle attaches missing entries and detaches existing ones.
+	Toggle(parent any, relation string, ids []any) (*db.SyncResult, error)
+	// UpdateExistingPivot updates pivot columns for an already-attached id.
+	UpdateExistingPivot(parent any, relation string, id any, attrs map[string]any) (int64, error)
 	// Observe registers an observer with the Orm.
 	Observe(model any, observer Observer)
 	// Query gets a new query builder instance.

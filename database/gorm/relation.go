@@ -443,3 +443,10 @@ func resolveMorphValue(parent any, gormDefault string) string {
 	}
 	return gormDefault
 }
+
+// resolveMorphAlias returns the morph alias for model from MorphClass() / morph map only —
+// without falling back to the table name. Used by Associate when we want to know whether the
+// owner has an explicit registered alias before defaulting to its table.
+func resolveMorphAlias(model any) (string, bool) {
+	return morphmap.MorphValue(model)
+}

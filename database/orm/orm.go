@@ -10,6 +10,7 @@ import (
 	"github.com/goravel/framework/contracts/binding"
 	"github.com/goravel/framework/contracts/config"
 	"github.com/goravel/framework/contracts/database"
+	dbcontract "github.com/goravel/framework/contracts/database/db"
 	contractsorm "github.com/goravel/framework/contracts/database/orm"
 	"github.com/goravel/framework/contracts/log"
 	"github.com/goravel/framework/database/driver"
@@ -135,6 +136,125 @@ func (r *Orm) Query() contractsorm.Query {
 	}
 
 	return r.query
+}
+
+// NewRelation returns a Query pre-scoped to the related rows for parent.relation. parent must be
+// a non-nil pointer to a struct. See contractsorm.Orm.NewRelation for the per-kind shape.
+func (r *Orm) NewRelation(parent any, relation string) contractsorm.Query {
+	q := r.Query()
+	gq, ok := q.(*gorm.Query)
+	if !ok {
+		// Implementation invariant: r.query is always a *gorm.Query in this driver.
+		// If a future driver implements contractsorm.Orm differently, that driver provides its
+		// own NewRelation; this branch should never run in practice.
+		_ = q
+		return nil
+	}
+	return gq.NewRelation(parent, relation)
+}
+
+// Save inserts or updates child as a member of parent's relation. See contractsorm.Orm.Save.
+func (r *Orm) Save(parent any, relation string, child any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.SaveRelation(parent, relation, child)
+}
+
+// SaveMany is the slice form of Save. See contractsorm.Orm.SaveMany.
+func (r *Orm) SaveMany(parent any, relation string, children any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.SaveManyRelation(parent, relation, children)
+}
+
+// Associate sets parent's foreign key (and morph_type for MorphTo) to point at owner.
+// See contractsorm.Orm.Associate.
+func (r *Orm) Associate(parent any, relation string, owner any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.AssociateRelation(parent, relation, owner)
+}
+
+// Dissociate clears parent's foreign key (and morph_type for MorphTo) and persists parent.
+// See contractsorm.Orm.Dissociate.
+func (r *Orm) Dissociate(parent any, relation string) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.DissociateRelation(parent, relation)
+}
+
+// Attach inserts pivot rows linking parent to ids. See contractsorm.Orm.Attach.
+func (r *Orm) Attach(parent any, relation string, ids []any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.AttachRelation(parent, relation, ids)
+}
+
+// AttachWithPivot is Attach with per-row pivot column values.
+// See contractsorm.Orm.AttachWithPivot.
+func (r *Orm) AttachWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) error {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil
+	}
+	return gq.AttachWithPivotRelation(parent, relation, idsWithAttrs)
+}
+
+// Detach removes pivot rows linking parent to ids. With nil ids, removes all pivot rows for
+// parent. See contractsorm.Orm.Detach.
+func (r *Orm) Detach(parent any, relation string, ids ...any) (int64, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return 0, nil
+	}
+	return gq.DetachRelation(parent, relation, ids)
+}
+
+// Sync replaces parent's pivot rows so they exactly match ids. See contractsorm.Orm.Sync.
+func (r *Orm) Sync(parent any, relation string, ids []any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.SyncRelation(parent, relation, ids)
+}
+
+// SyncWithoutDetaching adds missing pivot rows only. See contractsorm.Orm.SyncWithoutDetaching.
+func (r *Orm) SyncWithoutDetaching(parent any, relation string, ids []any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.SyncWithoutDetachingRelation(parent, relation, ids)
+}
+
+// Toggle attaches missing entries and detaches existing ones. See contractsorm.Orm.Toggle.
+func (r *Orm) Toggle(parent any, relation string, ids []any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.ToggleRelation(parent, relation, ids)
+}
+
+// UpdateExistingPivot updates pivot columns for an already-attached id. See
+// contractsorm.Orm.UpdateExistingPivot.
+func (r *Orm) UpdateExistingPivot(parent any, relation string, id any, attrs map[string]any) (int64, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return 0, nil
+	}
+	return gq.UpdateExistingPivotRelation(parent, relation, id, attrs)
 }
 
 func (r *Orm) SetQuery(query contractsorm.Query) {

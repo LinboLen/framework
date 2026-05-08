@@ -6,6 +6,8 @@ import (
 	context "context"
 
 	database "github.com/goravel/framework/contracts/database"
+	db "github.com/goravel/framework/contracts/database/db"
+
 	mock "github.com/stretchr/testify/mock"
 
 	orm "github.com/goravel/framework/contracts/database/orm"
@@ -24,6 +26,150 @@ type Orm_Expecter struct {
 
 func (_m *Orm) EXPECT() *Orm_Expecter {
 	return &Orm_Expecter{mock: &_m.Mock}
+}
+
+// Associate provides a mock function with given fields: parent, relation, owner
+func (_m *Orm) Associate(parent interface{}, relation string, owner interface{}) error {
+	ret := _m.Called(parent, relation, owner)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Associate")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}) error); ok {
+		r0 = rf(parent, relation, owner)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_Associate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Associate'
+type Orm_Associate_Call struct {
+	*mock.Call
+}
+
+// Associate is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - owner interface{}
+func (_e *Orm_Expecter) Associate(parent interface{}, relation interface{}, owner interface{}) *Orm_Associate_Call {
+	return &Orm_Associate_Call{Call: _e.mock.On("Associate", parent, relation, owner)}
+}
+
+func (_c *Orm_Associate_Call) Run(run func(parent interface{}, relation string, owner interface{})) *Orm_Associate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_Associate_Call) Return(_a0 error) *Orm_Associate_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_Associate_Call) RunAndReturn(run func(interface{}, string, interface{}) error) *Orm_Associate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Attach provides a mock function with given fields: parent, relation, ids
+func (_m *Orm) Attach(parent interface{}, relation string, ids []interface{}) error {
+	ret := _m.Called(parent, relation, ids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Attach")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) error); ok {
+		r0 = rf(parent, relation, ids)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_Attach_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Attach'
+type Orm_Attach_Call struct {
+	*mock.Call
+}
+
+// Attach is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - ids []interface{}
+func (_e *Orm_Expecter) Attach(parent interface{}, relation interface{}, ids interface{}) *Orm_Attach_Call {
+	return &Orm_Attach_Call{Call: _e.mock.On("Attach", parent, relation, ids)}
+}
+
+func (_c *Orm_Attach_Call) Run(run func(parent interface{}, relation string, ids []interface{})) *Orm_Attach_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].([]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_Attach_Call) Return(_a0 error) *Orm_Attach_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_Attach_Call) RunAndReturn(run func(interface{}, string, []interface{}) error) *Orm_Attach_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// AttachWithPivot provides a mock function with given fields: parent, relation, idsWithAttrs
+func (_m *Orm) AttachWithPivot(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{}) error {
+	ret := _m.Called(parent, relation, idsWithAttrs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AttachWithPivot")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) error); ok {
+		r0 = rf(parent, relation, idsWithAttrs)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_AttachWithPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachWithPivot'
+type Orm_AttachWithPivot_Call struct {
+	*mock.Call
+}
+
+// AttachWithPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - idsWithAttrs map[interface{}]map[string]interface{}
+func (_e *Orm_Expecter) AttachWithPivot(parent interface{}, relation interface{}, idsWithAttrs interface{}) *Orm_AttachWithPivot_Call {
+	return &Orm_AttachWithPivot_Call{Call: _e.mock.On("AttachWithPivot", parent, relation, idsWithAttrs)}
+}
+
+func (_c *Orm_AttachWithPivot_Call) Run(run func(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{})) *Orm_AttachWithPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[interface{}]map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_AttachWithPivot_Call) Return(_a0 error) *Orm_AttachWithPivot_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_AttachWithPivot_Call) RunAndReturn(run func(interface{}, string, map[interface{}]map[string]interface{}) error) *Orm_AttachWithPivot_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // Config provides a mock function with no fields
@@ -221,6 +367,121 @@ func (_c *Orm_DatabaseName_Call) RunAndReturn(run func() string) *Orm_DatabaseNa
 	return _c
 }
 
+// Detach provides a mock function with given fields: parent, relation, ids
+func (_m *Orm) Detach(parent interface{}, relation string, ids ...interface{}) (int64, error) {
+	var _ca []interface{}
+	_ca = append(_ca, parent, relation)
+	_ca = append(_ca, ids...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Detach")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, ...interface{}) (int64, error)); ok {
+		return rf(parent, relation, ids...)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, ...interface{}) int64); ok {
+		r0 = rf(parent, relation, ids...)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, ...interface{}) error); ok {
+		r1 = rf(parent, relation, ids...)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_Detach_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Detach'
+type Orm_Detach_Call struct {
+	*mock.Call
+}
+
+// Detach is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - ids ...interface{}
+func (_e *Orm_Expecter) Detach(parent interface{}, relation interface{}, ids ...interface{}) *Orm_Detach_Call {
+	return &Orm_Detach_Call{Call: _e.mock.On("Detach",
+		append([]interface{}{parent, relation}, ids...)...)}
+}
+
+func (_c *Orm_Detach_Call) Run(run func(parent interface{}, relation string, ids ...interface{})) *Orm_Detach_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]interface{}, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(interface{})
+			}
+		}
+		run(args[0].(interface{}), args[1].(string), variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Orm_Detach_Call) Return(_a0 int64, _a1 error) *Orm_Detach_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_Detach_Call) RunAndReturn(run func(interface{}, string, ...interface{}) (int64, error)) *Orm_Detach_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Dissociate provides a mock function with given fields: parent, relation
+func (_m *Orm) Dissociate(parent interface{}, relation string) error {
+	ret := _m.Called(parent, relation)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Dissociate")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string) error); ok {
+		r0 = rf(parent, relation)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_Dissociate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Dissociate'
+type Orm_Dissociate_Call struct {
+	*mock.Call
+}
+
+// Dissociate is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+func (_e *Orm_Expecter) Dissociate(parent interface{}, relation interface{}) *Orm_Dissociate_Call {
+	return &Orm_Dissociate_Call{Call: _e.mock.On("Dissociate", parent, relation)}
+}
+
+func (_c *Orm_Dissociate_Call) Run(run func(parent interface{}, relation string)) *Orm_Dissociate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Orm_Dissociate_Call) Return(_a0 error) *Orm_Dissociate_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_Dissociate_Call) RunAndReturn(run func(interface{}, string) error) *Orm_Dissociate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Factory provides a mock function with no fields
 func (_m *Orm) Factory() orm.Factory {
 	ret := _m.Called()
@@ -345,6 +606,55 @@ func (_c *Orm_Name_Call) RunAndReturn(run func() string) *Orm_Name_Call {
 	return _c
 }
 
+// NewRelation provides a mock function with given fields: parent, relation
+func (_m *Orm) NewRelation(parent interface{}, relation string) orm.Query {
+	ret := _m.Called(parent, relation)
+
+	if len(ret) == 0 {
+		panic("no return value specified for NewRelation")
+	}
+
+	var r0 orm.Query
+	if rf, ok := ret.Get(0).(func(interface{}, string) orm.Query); ok {
+		r0 = rf(parent, relation)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(orm.Query)
+		}
+	}
+
+	return r0
+}
+
+// Orm_NewRelation_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'NewRelation'
+type Orm_NewRelation_Call struct {
+	*mock.Call
+}
+
+// NewRelation is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+func (_e *Orm_Expecter) NewRelation(parent interface{}, relation interface{}) *Orm_NewRelation_Call {
+	return &Orm_NewRelation_Call{Call: _e.mock.On("NewRelation", parent, relation)}
+}
+
+func (_c *Orm_NewRelation_Call) Run(run func(parent interface{}, relation string)) *Orm_NewRelation_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Orm_NewRelation_Call) Return(_a0 orm.Query) *Orm_NewRelation_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_NewRelation_Call) RunAndReturn(run func(interface{}, string) orm.Query) *Orm_NewRelation_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Observe provides a mock function with given fields: model, observer
 func (_m *Orm) Observe(model interface{}, observer orm.Observer) {
 	_m.Called(model, observer)
@@ -426,6 +736,102 @@ func (_c *Orm_Query_Call) RunAndReturn(run func() orm.Query) *Orm_Query_Call {
 	return _c
 }
 
+// Save provides a mock function with given fields: parent, relation, child
+func (_m *Orm) Save(parent interface{}, relation string, child interface{}) error {
+	ret := _m.Called(parent, relation, child)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Save")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}) error); ok {
+		r0 = rf(parent, relation, child)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_Save_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Save'
+type Orm_Save_Call struct {
+	*mock.Call
+}
+
+// Save is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - child interface{}
+func (_e *Orm_Expecter) Save(parent interface{}, relation interface{}, child interface{}) *Orm_Save_Call {
+	return &Orm_Save_Call{Call: _e.mock.On("Save", parent, relation, child)}
+}
+
+func (_c *Orm_Save_Call) Run(run func(parent interface{}, relation string, child interface{})) *Orm_Save_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_Save_Call) Return(_a0 error) *Orm_Save_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_Save_Call) RunAndReturn(run func(interface{}, string, interface{}) error) *Orm_Save_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SaveMany provides a mock function with given fields: parent, relation, children
+func (_m *Orm) SaveMany(parent interface{}, relation string, children interface{}) error {
+	ret := _m.Called(parent, relation, children)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveMany")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}) error); ok {
+		r0 = rf(parent, relation, children)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Orm_SaveMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveMany'
+type Orm_SaveMany_Call struct {
+	*mock.Call
+}
+
+// SaveMany is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - children interface{}
+func (_e *Orm_Expecter) SaveMany(parent interface{}, relation interface{}, children interface{}) *Orm_SaveMany_Call {
+	return &Orm_SaveMany_Call{Call: _e.mock.On("SaveMany", parent, relation, children)}
+}
+
+func (_c *Orm_SaveMany_Call) Run(run func(parent interface{}, relation string, children interface{})) *Orm_SaveMany_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SaveMany_Call) Return(_a0 error) *Orm_SaveMany_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Orm_SaveMany_Call) RunAndReturn(run func(interface{}, string, interface{}) error) *Orm_SaveMany_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetQuery provides a mock function with given fields: query
 func (_m *Orm) SetQuery(query orm.Query) {
 	_m.Called(query)
@@ -456,6 +862,186 @@ func (_c *Orm_SetQuery_Call) Return() *Orm_SetQuery_Call {
 
 func (_c *Orm_SetQuery_Call) RunAndReturn(run func(orm.Query)) *Orm_SetQuery_Call {
 	_c.Run(run)
+	return _c
+}
+
+// Sync provides a mock function with given fields: parent, relation, ids
+func (_m *Orm) Sync(parent interface{}, relation string, ids []interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, ids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Sync")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, ids)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, []interface{}) error); ok {
+		r1 = rf(parent, relation, ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_Sync_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Sync'
+type Orm_Sync_Call struct {
+	*mock.Call
+}
+
+// Sync is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - ids []interface{}
+func (_e *Orm_Expecter) Sync(parent interface{}, relation interface{}, ids interface{}) *Orm_Sync_Call {
+	return &Orm_Sync_Call{Call: _e.mock.On("Sync", parent, relation, ids)}
+}
+
+func (_c *Orm_Sync_Call) Run(run func(parent interface{}, relation string, ids []interface{})) *Orm_Sync_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].([]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_Sync_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_Sync_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_Sync_Call) RunAndReturn(run func(interface{}, string, []interface{}) (*db.SyncResult, error)) *Orm_Sync_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SyncWithoutDetaching provides a mock function with given fields: parent, relation, ids
+func (_m *Orm) SyncWithoutDetaching(parent interface{}, relation string, ids []interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, ids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SyncWithoutDetaching")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, ids)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, []interface{}) error); ok {
+		r1 = rf(parent, relation, ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_SyncWithoutDetaching_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncWithoutDetaching'
+type Orm_SyncWithoutDetaching_Call struct {
+	*mock.Call
+}
+
+// SyncWithoutDetaching is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - ids []interface{}
+func (_e *Orm_Expecter) SyncWithoutDetaching(parent interface{}, relation interface{}, ids interface{}) *Orm_SyncWithoutDetaching_Call {
+	return &Orm_SyncWithoutDetaching_Call{Call: _e.mock.On("SyncWithoutDetaching", parent, relation, ids)}
+}
+
+func (_c *Orm_SyncWithoutDetaching_Call) Run(run func(parent interface{}, relation string, ids []interface{})) *Orm_SyncWithoutDetaching_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].([]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SyncWithoutDetaching_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_SyncWithoutDetaching_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_SyncWithoutDetaching_Call) RunAndReturn(run func(interface{}, string, []interface{}) (*db.SyncResult, error)) *Orm_SyncWithoutDetaching_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Toggle provides a mock function with given fields: parent, relation, ids
+func (_m *Orm) Toggle(parent interface{}, relation string, ids []interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, ids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Toggle")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, ids)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, []interface{}) error); ok {
+		r1 = rf(parent, relation, ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_Toggle_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Toggle'
+type Orm_Toggle_Call struct {
+	*mock.Call
+}
+
+// Toggle is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - ids []interface{}
+func (_e *Orm_Expecter) Toggle(parent interface{}, relation interface{}, ids interface{}) *Orm_Toggle_Call {
+	return &Orm_Toggle_Call{Call: _e.mock.On("Toggle", parent, relation, ids)}
+}
+
+func (_c *Orm_Toggle_Call) Run(run func(parent interface{}, relation string, ids []interface{})) *Orm_Toggle_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].([]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_Toggle_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_Toggle_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_Toggle_Call) RunAndReturn(run func(interface{}, string, []interface{}) (*db.SyncResult, error)) *Orm_Toggle_Call {
+	_c.Call.Return(run)
 	return _c
 }
 
@@ -501,6 +1087,65 @@ func (_c *Orm_Transaction_Call) Return(_a0 error) *Orm_Transaction_Call {
 }
 
 func (_c *Orm_Transaction_Call) RunAndReturn(run func(func(orm.Query) error) error) *Orm_Transaction_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateExistingPivot provides a mock function with given fields: parent, relation, id, attrs
+func (_m *Orm) UpdateExistingPivot(parent interface{}, relation string, id interface{}, attrs map[string]interface{}) (int64, error) {
+	ret := _m.Called(parent, relation, id, attrs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateExistingPivot")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}, map[string]interface{}) (int64, error)); ok {
+		return rf(parent, relation, id, attrs)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, interface{}, map[string]interface{}) int64); ok {
+		r0 = rf(parent, relation, id, attrs)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, interface{}, map[string]interface{}) error); ok {
+		r1 = rf(parent, relation, id, attrs)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_UpdateExistingPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateExistingPivot'
+type Orm_UpdateExistingPivot_Call struct {
+	*mock.Call
+}
+
+// UpdateExistingPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - id interface{}
+//   - attrs map[string]interface{}
+func (_e *Orm_Expecter) UpdateExistingPivot(parent interface{}, relation interface{}, id interface{}, attrs interface{}) *Orm_UpdateExistingPivot_Call {
+	return &Orm_UpdateExistingPivot_Call{Call: _e.mock.On("UpdateExistingPivot", parent, relation, id, attrs)}
+}
+
+func (_c *Orm_UpdateExistingPivot_Call) Run(run func(parent interface{}, relation string, id interface{}, attrs map[string]interface{})) *Orm_UpdateExistingPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(interface{}), args[3].(map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_UpdateExistingPivot_Call) Return(_a0 int64, _a1 error) *Orm_UpdateExistingPivot_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_UpdateExistingPivot_Call) RunAndReturn(run func(interface{}, string, interface{}, map[string]interface{}) (int64, error)) *Orm_UpdateExistingPivot_Call {
 	_c.Call.Return(run)
 	return _c
 }
