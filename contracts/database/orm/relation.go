@@ -261,16 +261,24 @@ type Many2Many struct {
 	// pivot columns. Use a non-default name when one related model serves multiple m2m relations
 	// with different pivot schemas (e.g. Role with both UserPivot and GroupPivot fields).
 	PivotField string
-	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table; the
-	// framework auto-stamps them on Attach / Sync / Save and updated_at on UpdateExistingPivot.
+	// PivotTimestamps enables auto-stamping of the pivot table's created_at / updated_at columns
+	// on Attach / Sync / Save (and updated_at on UpdateExistingPivot), using default column names.
+	// Most users don't need to set this flag explicitly — see "Detection priority" below.
+	//
+	// Detection priority for pivot timestamps (highest first):
+	//
+	//   1. Pivot struct field with `gorm:"autoCreateTime"` / `gorm:"autoUpdateTime"` tag. Works
+	//      for any field name; column name is taken from the struct's GORM schema.
+	//   2. Pivot struct field named CreatedAt / UpdatedAt of type time.Time (Go/GORM convention).
+	//   3. PivotTimestamps: true. Fallback for when no Pivot struct is declared (or its struct
+	//      has no timestamp fields) but the underlying table still has created_at / updated_at
+	//      columns you want auto-filled. Uses default column names.
+	//
+	// Customize column names via `gorm:"column:..."` on the Pivot struct field. There is
+	// intentionally no relation-level override — the Pivot struct is the single source of truth
+	// for column metadata.
 	PivotTimestamps bool
-	// PivotCreatedAt overrides the created_at column name on the pivot table. Default "created_at".
-	// Only consulted when PivotTimestamps is true.
-	PivotCreatedAt string
-	// PivotUpdatedAt overrides the updated_at column name on the pivot table. Default "updated_at".
-	// Only consulted when PivotTimestamps is true.
-	PivotUpdatedAt string
-	OnQuery        RelationCallback
+	OnQuery         RelationCallback
 	// OnPivotQuery scopes pivot-table SELECT / UPDATE / DELETE for Sync / Detach /
 	// UpdateExistingPivot operations on this relation. Equality conditions added here are NOT
 	// auto-injected into Attach INSERT rows — pass them via Attach attrs if needed.
@@ -355,10 +363,9 @@ type MorphToMany struct {
 	ParentKey       string
 	RelatedKey      string
 	// PivotField — see Many2Many.PivotField.
-	PivotField      string
+	PivotField string
+	// PivotTimestamps — see Many2Many.PivotTimestamps.
 	PivotTimestamps bool
-	PivotCreatedAt  string
-	PivotUpdatedAt  string
 	OnQuery         RelationCallback
 	// OnPivotQuery — see Many2Many.OnPivotQuery.
 	OnPivotQuery PivotCallback
@@ -380,10 +387,9 @@ type MorphedByMany struct {
 	ParentKey       string
 	RelatedKey      string
 	// PivotField — see Many2Many.PivotField.
-	PivotField      string
+	PivotField string
+	// PivotTimestamps — see Many2Many.PivotTimestamps.
 	PivotTimestamps bool
-	PivotCreatedAt  string
-	PivotUpdatedAt  string
 	OnQuery         RelationCallback
 	// OnPivotQuery — see Many2Many.OnPivotQuery.
 	OnPivotQuery PivotCallback

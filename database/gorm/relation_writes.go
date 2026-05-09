@@ -756,9 +756,9 @@ func (r *Query) resolvePivot(parent any, relation, op string) (*relationDescript
 }
 
 // basePivotRow builds the column map for one pivot INSERT row. Always includes the parent FK and
-// the related FK; for MorphToMany also includes the morph_type column. When pivotTimestamps is
-// enabled stamps created_at and updated_at with time.Now(). Caller-supplied attrs are merged on
-// top — the caller wins on column-name conflicts.
+// the related FK; for MorphToMany also includes the morph_type column. When the descriptor's
+// resolved created_at / updated_at columns are non-empty, stamps those columns with time.Now().
+// Caller-supplied attrs are merged on top — the caller wins on column-name conflicts.
 func (r *Query) basePivotRow(desc *relationDescriptor, parentVal, relatedID any, attrs map[string]any) map[string]any {
 	row := map[string]any{
 		desc.pivotParentRef.foreignColumn:  parentVal,
@@ -767,9 +767,11 @@ func (r *Query) basePivotRow(desc *relationDescriptor, parentVal, relatedID any,
 	if desc.kind == relKindMorphToMany {
 		row[desc.morphTypeColumn] = desc.morphValue
 	}
-	if desc.pivotTimestamps {
-		now := time.Now()
+	now := time.Now()
+	if desc.pivotCreatedAtColumn != "" {
 		row[desc.pivotCreatedAtColumn] = now
+	}
+	if desc.pivotUpdatedAtColumn != "" {
 		row[desc.pivotUpdatedAtColumn] = now
 	}
 	for k, v := range attrs {
@@ -1082,16 +1084,17 @@ func (r *Query) UpdateExistingPivotRelation(parent any, relation string, id any,
 }
 
 // doUpdateExistingPivot is the no-touch worker behind UpdateExistingPivotRelation. Returns the
-// number of pivot rows actually updated.
+// number of pivot rows actually updated. When the descriptor has a resolved updated_at column
+// and attrs doesn't already set it, injects time.Now() into the UPDATE map.
 func (r *Query) doUpdateExistingPivot(desc *relationDescriptor, parentVal any, id any, attrs map[string]any) (int64, error) {
-	if len(attrs) == 0 && !desc.pivotTimestamps {
+	if len(attrs) == 0 && desc.pivotUpdatedAtColumn == "" {
 		return 0, nil
 	}
 	updateMap := make(map[string]any, len(attrs)+1)
 	for k, v := range attrs {
 		updateMap[k] = v
 	}
-	if desc.pivotTimestamps {
+	if desc.pivotUpdatedAtColumn != "" {
 		if _, hasUpdatedAt := updateMap[desc.pivotUpdatedAtColumn]; !hasUpdatedAt {
 			updateMap[desc.pivotUpdatedAtColumn] = time.Now()
 		}

@@ -3,6 +3,7 @@ package gorm
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -348,8 +349,7 @@ func TestBasePivotRow_Timestamps_IncludesCreatedUpdatedAt(t *testing.T) {
 	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
 	assert.NoError(t, err)
 
-	// Enable timestamps on the descriptor
-	desc.pivotTimestamps = true
+	// Enable timestamps by setting the resolved column names directly.
 	desc.pivotCreatedAtColumn = "created_at"
 	desc.pivotUpdatedAtColumn = "updated_at"
 
@@ -358,10 +358,10 @@ func TestBasePivotRow_Timestamps_IncludesCreatedUpdatedAt(t *testing.T) {
 	assert.Equal(t, uint(99), row[desc.pivotRelatedRef.foreignColumn])
 
 	_, hasCreatedAt := row["created_at"]
-	assert.True(t, hasCreatedAt, "pivot row must include created_at when pivotTimestamps is true")
+	assert.True(t, hasCreatedAt, "pivot row must include created_at when desc.pivotCreatedAtColumn is set")
 
 	_, hasUpdatedAt := row["updated_at"]
-	assert.True(t, hasUpdatedAt, "pivot row must include updated_at when pivotTimestamps is true")
+	assert.True(t, hasUpdatedAt, "pivot row must include updated_at when desc.pivotUpdatedAtColumn is set")
 }
 
 func TestBasePivotRow_Timestamps_AttrsCanOverride(t *testing.T) {
@@ -369,7 +369,6 @@ func TestBasePivotRow_Timestamps_AttrsCanOverride(t *testing.T) {
 	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
 	assert.NoError(t, err)
 
-	desc.pivotTimestamps = true
 	desc.pivotCreatedAtColumn = "created_at"
 	desc.pivotUpdatedAtColumn = "updated_at"
 
@@ -381,6 +380,34 @@ func TestBasePivotRow_Timestamps_AttrsCanOverride(t *testing.T) {
 	assert.Equal(t, customTime, row["created_at"], "caller-supplied attrs must override timestamp")
 	_, hasUpdatedAt := row["updated_at"]
 	assert.True(t, hasUpdatedAt, "updated_at should still be set")
+}
+
+func TestBasePivotRow_NoTimestamps_OmitsBoth(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
+	assert.NoError(t, err)
+
+	// Empty resolved columns mean "don't auto-stamp".
+	row := q.basePivotRow(desc, uint(7), uint(99), nil)
+	_, hasCreatedAt := row["created_at"]
+	_, hasUpdatedAt := row["updated_at"]
+	assert.False(t, hasCreatedAt)
+	assert.False(t, hasUpdatedAt)
+}
+
+func TestBasePivotRow_OnlyUpdatedAt_OmitsCreatedAt(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
+	assert.NoError(t, err)
+
+	// Pivot struct may declare only UpdatedAt (e.g. ledger-style writes); only stamp updated_at.
+	desc.pivotUpdatedAtColumn = "updated_at"
+
+	row := q.basePivotRow(desc, uint(7), uint(99), nil)
+	_, hasCreatedAt := row["created_at"]
+	_, hasUpdatedAt := row["updated_at"]
+	assert.False(t, hasCreatedAt)
+	assert.True(t, hasUpdatedAt)
 }
 
 // Phase G tests: SyncWithPivot / SyncWithPivotValues / ToggleWithPivot
@@ -481,4 +508,115 @@ func TestDescriptor_RelatedKeyType_MorphToMany(t *testing.T) {
 	desc, err := resolveRelation(q.instance, &morphPost{}, "Tags")
 	assert.NoError(t, err)
 	assert.Equal(t, reflect.TypeFor[uint](), desc.relatedKeyType)
+}
+
+// Pivot timestamp resolution tests — exercise the priority order between Pivot struct
+// autoCreateTime/autoUpdateTime tags, CreatedAt/UpdatedAt convention, and the relation-level
+// PivotTimestamps fallback.
+
+type tsTaggedPivot struct {
+	UserID  uint      `gorm:"column:user_id"`
+	RoleID  uint      `gorm:"column:role_id"`
+	Stamped time.Time `gorm:"autoCreateTime"`
+	Edited  time.Time `gorm:"autoUpdateTime"`
+}
+
+type tsTaggedRole struct {
+	ID    uint
+	Name  string
+	Pivot tsTaggedPivot `gorm:"-"`
+}
+
+type tsConventionPivot struct {
+	UserID    uint `gorm:"column:user_id"`
+	RoleID    uint `gorm:"column:role_id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type tsConventionRole struct {
+	ID    uint
+	Name  string
+	Pivot tsConventionPivot `gorm:"-"`
+}
+
+type tsCreatedOnlyPivot struct {
+	UserID    uint `gorm:"column:user_id"`
+	RoleID    uint `gorm:"column:role_id"`
+	CreatedAt time.Time
+}
+
+type tsCreatedOnlyRole struct {
+	ID    uint
+	Pivot tsCreatedOnlyPivot `gorm:"-"`
+}
+
+type tsCustomColumnPivot struct {
+	UserID  uint      `gorm:"column:user_id"`
+	RoleID  uint      `gorm:"column:role_id"`
+	Stamped time.Time `gorm:"autoCreateTime;column:made_on"`
+	Edited  time.Time `gorm:"autoUpdateTime;column:edited_at"`
+}
+
+type tsCustomColumnRole struct {
+	ID    uint
+	Pivot tsCustomColumnPivot `gorm:"-"`
+}
+
+func TestResolvePivotTimestamps_AutoCreateTimeTag(t *testing.T) {
+	db := newStubGormDB(t)
+	created, updated, err := resolvePivotTimestamps(db, &tsTaggedRole{}, "Pivot", false)
+	assert.NoError(t, err)
+	assert.Equal(t, "stamped", created)
+	assert.Equal(t, "edited", updated)
+}
+
+func TestResolvePivotTimestamps_Convention(t *testing.T) {
+	db := newStubGormDB(t)
+	created, updated, err := resolvePivotTimestamps(db, &tsConventionRole{}, "Pivot", false)
+	assert.NoError(t, err)
+	assert.Equal(t, "created_at", created)
+	assert.Equal(t, "updated_at", updated)
+}
+
+func TestResolvePivotTimestamps_OnlyCreatedAt(t *testing.T) {
+	db := newStubGormDB(t)
+	created, updated, err := resolvePivotTimestamps(db, &tsCreatedOnlyRole{}, "Pivot", false)
+	assert.NoError(t, err)
+	assert.Equal(t, "created_at", created)
+	assert.Equal(t, "", updated, "no UpdatedAt field means don't auto-stamp on update")
+}
+
+func TestResolvePivotTimestamps_CustomColumnTag(t *testing.T) {
+	db := newStubGormDB(t)
+	created, updated, err := resolvePivotTimestamps(db, &tsCustomColumnRole{}, "Pivot", false)
+	assert.NoError(t, err)
+	assert.Equal(t, "made_on", created)
+	assert.Equal(t, "edited_at", updated)
+}
+
+func TestResolvePivotTimestamps_NoStruct_FallbackEnabled(t *testing.T) {
+	db := newStubGormDB(t)
+	// roleWithoutPivot has no Pivot field — falls through to relation-level PivotTimestamps.
+	created, updated, err := resolvePivotTimestamps(db, &roleWithoutPivot{}, "Pivot", true)
+	assert.NoError(t, err)
+	assert.Equal(t, "created_at", created)
+	assert.Equal(t, "updated_at", updated)
+}
+
+func TestResolvePivotTimestamps_NoStruct_FallbackDisabled(t *testing.T) {
+	db := newStubGormDB(t)
+	created, updated, err := resolvePivotTimestamps(db, &roleWithoutPivot{}, "Pivot", false)
+	assert.NoError(t, err)
+	assert.Equal(t, "", created)
+	assert.Equal(t, "", updated)
+}
+
+func TestResolvePivotTimestamps_StructHasOneCol_FallbackFillsOther(t *testing.T) {
+	db := newStubGormDB(t)
+	// Struct provides only CreatedAt; PivotTimestamps: true fills updated_at default.
+	created, updated, err := resolvePivotTimestamps(db, &tsCreatedOnlyRole{}, "Pivot", true)
+	assert.NoError(t, err)
+	assert.Equal(t, "created_at", created, "struct-provided column wins")
+	assert.Equal(t, "updated_at", updated, "fallback fills the column the struct didn't provide")
 }

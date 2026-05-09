@@ -2,6 +2,7 @@ package gorm
 
 import (
 	"reflect"
+	"time"
 
 	gormio "gorm.io/gorm"
 
@@ -58,11 +59,15 @@ type relationDescriptor struct {
 	// defaults to "Pivot". When the related model has no field by this name, no Pivot hydration
 	// happens. The field's Go type drives both the SELECT list and hydration target.
 	pivotField string
-	// pivotTimestamps, when true, causes basePivotRow to stamp created_at / updated_at on every
-	// pivot INSERT and UpdateExistingPivotRelation to inject updated_at on UPDATE.
-	pivotTimestamps      bool
-	pivotCreatedAtColumn string // default "created_at"
-	pivotUpdatedAtColumn string // default "updated_at"
+	// pivotCreatedAtColumn is the pivot-table column to auto-stamp with the current time on
+	// INSERT. Empty string means "don't auto-stamp on INSERT". Resolved by the descriptor builder
+	// from (priority): Pivot struct's autoCreateTime field → Pivot struct's CreatedAt field →
+	// PivotTimestamps: true fallback (defaults to "created_at").
+	pivotCreatedAtColumn string
+	// pivotUpdatedAtColumn is the pivot-table column to auto-stamp with the current time on
+	// INSERT and UPDATE. Empty string means "don't auto-stamp on INSERT/UPDATE". Same resolution
+	// rules as pivotCreatedAtColumn but using autoUpdateTime / UpdatedAt.
+	pivotUpdatedAtColumn string
 
 	// relatedKeyType is the Go type of the related model's PK field — used by castKey to normalise
 	// SyncResult ids back to the related model's native key type, irrespective of what the caller
@@ -319,6 +324,11 @@ func descriptorFromMany2Many(db *gormio.DB, parent any, parentTable, name string
 	if err != nil {
 		return nil, err
 	}
+	pivotField := defaultStr(rel.PivotField, "Pivot")
+	createdAtCol, updatedAtCol, err := resolvePivotTimestamps(db, rel.Related, pivotField, rel.PivotTimestamps)
+	if err != nil {
+		return nil, err
+	}
 
 	return &relationDescriptor{
 		kind:         relKindMany2Many,
@@ -338,10 +348,9 @@ func descriptorFromMany2Many(db *gormio.DB, parent any, parentTable, name string
 			foreignTable:  pivotTable,
 			foreignColumn: relatedPivotKey,
 		},
-		pivotField:           defaultStr(rel.PivotField, "Pivot"),
-		pivotTimestamps:      rel.PivotTimestamps,
-		pivotCreatedAtColumn: defaultStr(rel.PivotCreatedAt, "created_at"),
-		pivotUpdatedAtColumn: defaultStr(rel.PivotUpdatedAt, "updated_at"),
+		pivotField:           pivotField,
+		pivotCreatedAtColumn: createdAtCol,
+		pivotUpdatedAtColumn: updatedAtCol,
 		relatedKeyType:       relatedKeyType,
 	}, nil
 }
@@ -398,7 +407,7 @@ func descriptorFromMorphToMany(db *gormio.DB, parent any, parentTable, name stri
 	return buildMorphPivotDescriptor(db, parent, parentTable, name,
 		rel.Related, rel.Name, rel.Table, rel.TypeColumn,
 		rel.ForeignPivotKey, rel.RelatedPivotKey, rel.ParentKey, rel.RelatedKey,
-		rel.PivotField, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
+		rel.PivotField, rel.PivotTimestamps,
 		inverse,
 	)
 }
@@ -407,12 +416,12 @@ func descriptorFromMorphedByMany(db *gormio.DB, parent any, parentTable, name st
 	return buildMorphPivotDescriptor(db, parent, parentTable, name,
 		rel.Related, rel.Name, rel.Table, rel.TypeColumn,
 		rel.ForeignPivotKey, rel.RelatedPivotKey, rel.ParentKey, rel.RelatedKey,
-		rel.PivotField, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
+		rel.PivotField, rel.PivotTimestamps,
 		true,
 	)
 }
 
-func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name string, related any, morphName, table, typeCol, foreignPivot, relatedPivot, parentKey, relatedKey string, pivotField string, pivotTimestamps bool, pivotCreatedAt, pivotUpdatedAt string, inverse bool) (*relationDescriptor, error) {
+func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name string, related any, morphName, table, typeCol, foreignPivot, relatedPivot, parentKey, relatedKey string, pivotField string, pivotTimestamps bool, inverse bool) (*relationDescriptor, error) {
 	if related == nil {
 		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Related")
 	}
@@ -440,6 +449,11 @@ func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name stri
 	if err != nil {
 		return nil, err
 	}
+	pivotFieldName := defaultStr(pivotField, "Pivot")
+	createdAtCol, updatedAtCol, err := resolvePivotTimestamps(db, related, pivotFieldName, pivotTimestamps)
+	if err != nil {
+		return nil, err
+	}
 
 	return &relationDescriptor{
 		kind:            relKindMorphToMany,
@@ -463,10 +477,9 @@ func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name stri
 			foreignTable:  pivotTable,
 			foreignColumn: relatedPivotKey,
 		},
-		pivotField:           defaultStr(pivotField, "Pivot"),
-		pivotTimestamps:      pivotTimestamps,
-		pivotCreatedAtColumn: defaultStr(pivotCreatedAt, "created_at"),
-		pivotUpdatedAtColumn: defaultStr(pivotUpdatedAt, "updated_at"),
+		pivotField:           pivotFieldName,
+		pivotCreatedAtColumn: createdAtCol,
+		pivotUpdatedAtColumn: updatedAtCol,
 		relatedKeyType:       relatedKeyType,
 	}, nil
 }
@@ -522,6 +535,76 @@ func relatedKeyFieldType(db *gormio.DB, related any, columnName string) (reflect
 		return field.FieldType, nil
 	}
 	return nil, nil
+}
+
+// resolvePivotTimestamps decides which pivot-table columns should be auto-stamped with the
+// current time on INSERT (created) and INSERT/UPDATE (updated). Detection priority:
+//
+//  1. Pivot struct field with `gorm:"autoCreateTime"` / `gorm:"autoUpdateTime"` tag — column
+//     name from the field's GORM schema (respects `gorm:"column:..."`).
+//  2. Pivot struct field named CreatedAt / UpdatedAt of type time.Time (GORM convention).
+//  3. fallbackEnabled (relation-level PivotTimestamps: true) — defaults to "created_at" /
+//     "updated_at" for whichever column the pivot struct didn't already provide.
+//
+// Empty string for either column means "don't auto-stamp on that op". The pivot struct does not
+// need to declare both — declaring only CreatedAt is fine and disables update-side stamping.
+func resolvePivotTimestamps(db *gormio.DB, relatedModel any, pivotFieldName string, fallbackEnabled bool) (createdCol, updatedCol string, err error) {
+	pivotStructType, ok := pivotFieldStructType(relatedModel, pivotFieldName)
+	if ok {
+		schema, schemaErr := parseGormSchema(db, reflect.New(pivotStructType).Interface())
+		if schemaErr != nil {
+			return "", "", schemaErr
+		}
+		// Priority 1: explicit GORM tags on any field.
+		for _, f := range schema.Fields {
+			if f.AutoCreateTime != 0 && createdCol == "" {
+				createdCol = f.DBName
+			}
+			if f.AutoUpdateTime != 0 && updatedCol == "" {
+				updatedCol = f.DBName
+			}
+		}
+		// Priority 2: convention — fields named CreatedAt / UpdatedAt of type time.Time.
+		if createdCol == "" {
+			if f, found := schema.FieldsByName["CreatedAt"]; found && f.FieldType == reflect.TypeFor[time.Time]() {
+				createdCol = f.DBName
+			}
+		}
+		if updatedCol == "" {
+			if f, found := schema.FieldsByName["UpdatedAt"]; found && f.FieldType == reflect.TypeFor[time.Time]() {
+				updatedCol = f.DBName
+			}
+		}
+	}
+	// Priority 3: relation-level fallback. Only fills columns the pivot struct didn't provide.
+	if fallbackEnabled {
+		if createdCol == "" {
+			createdCol = "created_at"
+		}
+		if updatedCol == "" {
+			updatedCol = "updated_at"
+		}
+	}
+	return createdCol, updatedCol, nil
+}
+
+// pivotFieldStructType reflects relatedModel for a struct field named pivotFieldName and returns
+// its underlying struct type. Returns ok=false when the related model has no such field, or when
+// the field exists but isn't a struct (the eager loader will surface the mismatched-kind error
+// later via OrmRelationPivotFieldNotStruct; here we silently fall back to no struct-driven config).
+func pivotFieldStructType(relatedModel any, pivotFieldName string) (reflect.Type, bool) {
+	relatedType := reflect.TypeOf(relatedModel)
+	if relatedType.Kind() == reflect.Pointer {
+		relatedType = relatedType.Elem()
+	}
+	if relatedType.Kind() != reflect.Struct {
+		return nil, false
+	}
+	field, ok := relatedType.FieldByName(pivotFieldName)
+	if !ok || field.Type.Kind() != reflect.Struct {
+		return nil, false
+	}
+	return field.Type, true
 }
 
 // alphabeticalPivotName returns the Eloquent-convention default pivot table for a Many2Many
