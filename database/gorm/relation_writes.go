@@ -860,6 +860,130 @@ func (r *Query) syncCore(parent any, relation string, ids []any, detachMissing b
 	return out, nil
 }
 
+// SyncRelationWithPivot is SyncRelation with per-ID pivot column values. The map key is the
+// related id; the map value is the column-name-to-value map applied to that pivot row. For
+// existing pivot rows with non-empty attrs, updates the pivot columns (reported in
+// SyncResult.Updated). Mirrors fedaco's sync(map).
+func (r *Query) SyncRelationWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*dbcontract.SyncResult, error) {
+	return r.syncCoreWithPivot(parent, relation, idsWithAttrs, true /*detach*/, false /*toggle*/, "SyncWithPivot")
+}
+
+// SyncRelationWithPivotValues applies the same pivot column values to all ids. Mirrors fedaco's
+// syncWithPivotValues.
+func (r *Query) SyncRelationWithPivotValues(parent any, relation string, ids []any, pivotValues map[string]any) (*dbcontract.SyncResult, error) {
+	idsWithAttrs := make(map[any]map[string]any, len(ids))
+	for _, id := range ids {
+		idsWithAttrs[id] = pivotValues
+	}
+	return r.syncCoreWithPivot(parent, relation, idsWithAttrs, true /*detach*/, false /*toggle*/, "SyncWithPivotValues")
+}
+
+// SyncWithoutDetachingRelationWithPivot is SyncRelationWithPivot minus the detach step.
+func (r *Query) SyncWithoutDetachingRelationWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*dbcontract.SyncResult, error) {
+	return r.syncCoreWithPivot(parent, relation, idsWithAttrs, false /*detach*/, false /*toggle*/, "SyncWithoutDetachingWithPivot")
+}
+
+// ToggleRelationWithPivot is ToggleRelation with per-ID pivot column values for newly attached rows.
+func (r *Query) ToggleRelationWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*dbcontract.SyncResult, error) {
+	return r.syncCoreWithPivot(parent, relation, idsWithAttrs, false, true /*toggle*/, "ToggleWithPivot")
+}
+
+// syncCoreWithPivot is the shared engine for SyncWithPivot / SyncWithPivotValues /
+// SyncWithoutDetachingWithPivot / ToggleWithPivot. Similar to syncCore but accepts a map of IDs
+// to pivot attributes and updates existing pivot rows when attrs are non-empty.
+func (r *Query) syncCoreWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any, detachMissing bool, toggle bool, op string) (*dbcontract.SyncResult, error) {
+	desc, parentVal, err := r.resolvePivot(parent, relation, op)
+	if err != nil {
+		return nil, err
+	}
+	current, err := r.allPivotIDs(desc, parentVal)
+	if err != nil {
+		return nil, err
+	}
+	currentSet := make(map[string]any, len(current))
+	for _, id := range current {
+		currentSet[dictKey(id)] = id
+	}
+	wantSet := make(map[string]any, len(idsWithAttrs))
+	for id := range idsWithAttrs {
+		wantSet[dictKey(id)] = id
+	}
+
+	out := &dbcontract.SyncResult{}
+	switch {
+	case toggle:
+		// Anything in `idsWithAttrs` that exists -> detach; anything that doesn't -> attach with attrs.
+		var detachIDs []any
+		attachMap := make(map[any]map[string]any)
+		for k, v := range wantSet {
+			if _, exists := currentSet[k]; exists {
+				detachIDs = append(detachIDs, v)
+			} else {
+				attachMap[v] = idsWithAttrs[v]
+			}
+		}
+		if len(attachMap) > 0 {
+			if err := r.AttachWithPivotRelation(parent, relation, attachMap); err != nil {
+				return nil, err
+			}
+			for id := range attachMap {
+				out.Attached = append(out.Attached, id)
+			}
+		}
+		if len(detachIDs) > 0 {
+			if _, err := r.DetachRelation(parent, relation, detachIDs); err != nil {
+				return nil, err
+			}
+		}
+		out.Detached = detachIDs
+	default:
+		// Attach anything in `wantSet` that isn't yet attached; update existing if attrs non-empty.
+		attachMap := make(map[any]map[string]any)
+		var updateIDs []any
+		for k, v := range wantSet {
+			if _, exists := currentSet[k]; !exists {
+				attachMap[v] = idsWithAttrs[v]
+			} else {
+				// Already attached — if attrs non-empty, update the pivot row.
+				attrs := idsWithAttrs[v]
+				if len(attrs) > 0 {
+					if _, err := r.UpdateExistingPivotRelation(parent, relation, v, attrs); err != nil {
+						return nil, err
+					}
+					updateIDs = append(updateIDs, v)
+				}
+			}
+		}
+		if len(attachMap) > 0 {
+			if err := r.AttachWithPivotRelation(parent, relation, attachMap); err != nil {
+				return nil, err
+			}
+			for id := range attachMap {
+				out.Attached = append(out.Attached, id)
+			}
+		}
+		out.Updated = updateIDs
+
+		if detachMissing {
+			// Detach anything in `currentSet` that isn't in `wantSet`.
+			var detachIDs []any
+			for k, v := range currentSet {
+				if _, keep := wantSet[k]; !keep {
+					detachIDs = append(detachIDs, v)
+				}
+			}
+			if len(detachIDs) > 0 {
+				if _, err := r.DetachRelation(parent, relation, detachIDs); err != nil {
+					return nil, err
+				}
+			}
+			out.Detached = detachIDs
+		}
+	}
+
+	return out, nil
+}
+
 // UpdateExistingPivotRelation updates pivot columns for an already-attached id. When
 // pivotTimestamps is enabled and attrs doesn't already set updated_at, injects time.Now() into
 // the update map. No-op (returns 0) if no matching pivot row exists.

@@ -67,10 +67,22 @@ type Orm interface {
 	// attaches new ones, leaves existing untouched. Returns counts of attached / detached /
 	// updated ids. Supported kinds: Many2Many, MorphToMany, MorphedByMany.
 	Sync(parent any, relation string, ids []any) (*db.SyncResult, error)
+	// SyncWithPivot is Sync with per-ID pivot column values. The map key is the related id; the
+	// map value is the column-name-to-value map applied to that pivot row. For existing pivot rows
+	// with non-empty attrs, updates the pivot columns (reported in SyncResult.Updated). Mirrors
+	// fedaco's sync(map) where the map keys are IDs and values are pivot attributes.
+	SyncWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*db.SyncResult, error)
+	// SyncWithPivotValues is a convenience wrapper that applies the same pivot column values to
+	// all ids. Mirrors fedaco's syncWithPivotValues.
+	SyncWithPivotValues(parent any, relation string, ids []any, pivotValues map[string]any) (*db.SyncResult, error)
 	// SyncWithoutDetaching is Sync minus the detach step — adds missing entries only.
 	SyncWithoutDetaching(parent any, relation string, ids []any) (*db.SyncResult, error)
+	// SyncWithoutDetachingWithPivot is SyncWithPivot minus the detach step.
+	SyncWithoutDetachingWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*db.SyncResult, error)
 	// Toggle attaches missing entries and detaches existing ones.
 	Toggle(parent any, relation string, ids []any) (*db.SyncResult, error)
+	// ToggleWithPivot is Toggle with per-ID pivot column values for newly attached rows.
+	ToggleWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*db.SyncResult, error)
 	// UpdateExistingPivot updates pivot columns for an already-attached id.
 	UpdateExistingPivot(parent any, relation string, id any, attrs map[string]any) (int64, error)
 

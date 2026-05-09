@@ -381,3 +381,29 @@ func TestBasePivotRow_Timestamps_AttrsCanOverride(t *testing.T) {
 	_, hasUpdatedAt := row["updated_at"]
 	assert.True(t, hasUpdatedAt, "updated_at should still be set")
 }
+
+// Phase G tests: SyncWithPivot / SyncWithPivotValues / ToggleWithPivot
+
+func TestSyncRelationWithPivot_UnsupportedKind_HasMany(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	_, err := q.SyncRelationWithPivot(&relUser{ID: 1}, "Books", map[any]map[string]any{uint(1): {"priority": "high"}})
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestSyncRelationWithPivotValues_UnsupportedKind_BelongsTo(t *testing.T) {
+	q := newRelQueryWith(t, &relBook{})
+	_, err := q.SyncRelationWithPivotValues(&relBook{ID: 1}, "Author", []any{uint(1)}, map[string]any{"priority": "high"})
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestSyncWithoutDetachingRelationWithPivot_UnsupportedKind_HasMany(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	_, err := q.SyncWithoutDetachingRelationWithPivot(&relUser{ID: 1}, "Books", map[any]map[string]any{uint(1): {"priority": "high"}})
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+func TestToggleRelationWithPivot_UnsupportedKind_HasMany(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	_, err := q.ToggleRelationWithPivot(&relUser{ID: 1}, "Books", map[any]map[string]any{uint(1): {"priority": "high"}})
+	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}

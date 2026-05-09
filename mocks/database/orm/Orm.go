@@ -1268,6 +1268,127 @@ func (_c *Orm_Sync_Call) RunAndReturn(run func(interface{}, string, []interface{
 	return _c
 }
 
+// SyncWithPivot provides a mock function with given fields: parent, relation, idsWithAttrs
+func (_m *Orm) SyncWithPivot(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, idsWithAttrs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SyncWithPivot")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, idsWithAttrs)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, idsWithAttrs)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, map[interface{}]map[string]interface{}) error); ok {
+		r1 = rf(parent, relation, idsWithAttrs)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_SyncWithPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncWithPivot'
+type Orm_SyncWithPivot_Call struct {
+	*mock.Call
+}
+
+// SyncWithPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - idsWithAttrs map[interface{}]map[string]interface{}
+func (_e *Orm_Expecter) SyncWithPivot(parent interface{}, relation interface{}, idsWithAttrs interface{}) *Orm_SyncWithPivot_Call {
+	return &Orm_SyncWithPivot_Call{Call: _e.mock.On("SyncWithPivot", parent, relation, idsWithAttrs)}
+}
+
+func (_c *Orm_SyncWithPivot_Call) Run(run func(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{})) *Orm_SyncWithPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[interface{}]map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SyncWithPivot_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_SyncWithPivot_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_SyncWithPivot_Call) RunAndReturn(run func(interface{}, string, map[interface{}]map[string]interface{}) (*db.SyncResult, error)) *Orm_SyncWithPivot_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SyncWithPivotValues provides a mock function with given fields: parent, relation, ids, pivotValues
+func (_m *Orm) SyncWithPivotValues(parent interface{}, relation string, ids []interface{}, pivotValues map[string]interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, ids, pivotValues)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SyncWithPivotValues")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}, map[string]interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, ids, pivotValues)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, []interface{}, map[string]interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, ids, pivotValues)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, []interface{}, map[string]interface{}) error); ok {
+		r1 = rf(parent, relation, ids, pivotValues)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_SyncWithPivotValues_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncWithPivotValues'
+type Orm_SyncWithPivotValues_Call struct {
+	*mock.Call
+}
+
+// SyncWithPivotValues is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - ids []interface{}
+//   - pivotValues map[string]interface{}
+func (_e *Orm_Expecter) SyncWithPivotValues(parent interface{}, relation interface{}, ids interface{}, pivotValues interface{}) *Orm_SyncWithPivotValues_Call {
+	return &Orm_SyncWithPivotValues_Call{Call: _e.mock.On("SyncWithPivotValues", parent, relation, ids, pivotValues)}
+}
+
+func (_c *Orm_SyncWithPivotValues_Call) Run(run func(parent interface{}, relation string, ids []interface{}, pivotValues map[string]interface{})) *Orm_SyncWithPivotValues_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].([]interface{}), args[3].(map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SyncWithPivotValues_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_SyncWithPivotValues_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_SyncWithPivotValues_Call) RunAndReturn(run func(interface{}, string, []interface{}, map[string]interface{}) (*db.SyncResult, error)) *Orm_SyncWithPivotValues_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SyncWithoutDetaching provides a mock function with given fields: parent, relation, ids
 func (_m *Orm) SyncWithoutDetaching(parent interface{}, relation string, ids []interface{}) (*db.SyncResult, error) {
 	ret := _m.Called(parent, relation, ids)
@@ -1328,6 +1449,66 @@ func (_c *Orm_SyncWithoutDetaching_Call) RunAndReturn(run func(interface{}, stri
 	return _c
 }
 
+// SyncWithoutDetachingWithPivot provides a mock function with given fields: parent, relation, idsWithAttrs
+func (_m *Orm) SyncWithoutDetachingWithPivot(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, idsWithAttrs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SyncWithoutDetachingWithPivot")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, idsWithAttrs)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, idsWithAttrs)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, map[interface{}]map[string]interface{}) error); ok {
+		r1 = rf(parent, relation, idsWithAttrs)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_SyncWithoutDetachingWithPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncWithoutDetachingWithPivot'
+type Orm_SyncWithoutDetachingWithPivot_Call struct {
+	*mock.Call
+}
+
+// SyncWithoutDetachingWithPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - idsWithAttrs map[interface{}]map[string]interface{}
+func (_e *Orm_Expecter) SyncWithoutDetachingWithPivot(parent interface{}, relation interface{}, idsWithAttrs interface{}) *Orm_SyncWithoutDetachingWithPivot_Call {
+	return &Orm_SyncWithoutDetachingWithPivot_Call{Call: _e.mock.On("SyncWithoutDetachingWithPivot", parent, relation, idsWithAttrs)}
+}
+
+func (_c *Orm_SyncWithoutDetachingWithPivot_Call) Run(run func(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{})) *Orm_SyncWithoutDetachingWithPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[interface{}]map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_SyncWithoutDetachingWithPivot_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_SyncWithoutDetachingWithPivot_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_SyncWithoutDetachingWithPivot_Call) RunAndReturn(run func(interface{}, string, map[interface{}]map[string]interface{}) (*db.SyncResult, error)) *Orm_SyncWithoutDetachingWithPivot_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Toggle provides a mock function with given fields: parent, relation, ids
 func (_m *Orm) Toggle(parent interface{}, relation string, ids []interface{}) (*db.SyncResult, error) {
 	ret := _m.Called(parent, relation, ids)
@@ -1384,6 +1565,66 @@ func (_c *Orm_Toggle_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_Toggle_Cal
 }
 
 func (_c *Orm_Toggle_Call) RunAndReturn(run func(interface{}, string, []interface{}) (*db.SyncResult, error)) *Orm_Toggle_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ToggleWithPivot provides a mock function with given fields: parent, relation, idsWithAttrs
+func (_m *Orm) ToggleWithPivot(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{}) (*db.SyncResult, error) {
+	ret := _m.Called(parent, relation, idsWithAttrs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ToggleWithPivot")
+	}
+
+	var r0 *db.SyncResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) (*db.SyncResult, error)); ok {
+		return rf(parent, relation, idsWithAttrs)
+	}
+	if rf, ok := ret.Get(0).(func(interface{}, string, map[interface{}]map[string]interface{}) *db.SyncResult); ok {
+		r0 = rf(parent, relation, idsWithAttrs)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.SyncResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(interface{}, string, map[interface{}]map[string]interface{}) error); ok {
+		r1 = rf(parent, relation, idsWithAttrs)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Orm_ToggleWithPivot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ToggleWithPivot'
+type Orm_ToggleWithPivot_Call struct {
+	*mock.Call
+}
+
+// ToggleWithPivot is a helper method to define mock.On call
+//   - parent interface{}
+//   - relation string
+//   - idsWithAttrs map[interface{}]map[string]interface{}
+func (_e *Orm_Expecter) ToggleWithPivot(parent interface{}, relation interface{}, idsWithAttrs interface{}) *Orm_ToggleWithPivot_Call {
+	return &Orm_ToggleWithPivot_Call{Call: _e.mock.On("ToggleWithPivot", parent, relation, idsWithAttrs)}
+}
+
+func (_c *Orm_ToggleWithPivot_Call) Run(run func(parent interface{}, relation string, idsWithAttrs map[interface{}]map[string]interface{})) *Orm_ToggleWithPivot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(interface{}), args[1].(string), args[2].(map[interface{}]map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Orm_ToggleWithPivot_Call) Return(_a0 *db.SyncResult, _a1 error) *Orm_ToggleWithPivot_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Orm_ToggleWithPivot_Call) RunAndReturn(run func(interface{}, string, map[interface{}]map[string]interface{}) (*db.SyncResult, error)) *Orm_ToggleWithPivot_Call {
 	_c.Call.Return(run)
 	return _c
 }

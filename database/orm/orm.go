@@ -303,6 +303,24 @@ func (r *Orm) Sync(parent any, relation string, ids []any) (*dbcontract.SyncResu
 	return gq.SyncRelation(parent, relation, ids)
 }
 
+// SyncWithPivot is Sync with per-ID pivot column values. See contractsorm.Orm.SyncWithPivot.
+func (r *Orm) SyncWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.SyncRelationWithPivot(parent, relation, idsWithAttrs)
+}
+
+// SyncWithPivotValues applies the same pivot values to all ids. See contractsorm.Orm.SyncWithPivotValues.
+func (r *Orm) SyncWithPivotValues(parent any, relation string, ids []any, pivotValues map[string]any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.SyncRelationWithPivotValues(parent, relation, ids, pivotValues)
+}
+
 // SyncWithoutDetaching adds missing pivot rows only. See contractsorm.Orm.SyncWithoutDetaching.
 func (r *Orm) SyncWithoutDetaching(parent any, relation string, ids []any) (*dbcontract.SyncResult, error) {
 	gq, ok := r.Query().(*gorm.Query)
@@ -312,6 +330,15 @@ func (r *Orm) SyncWithoutDetaching(parent any, relation string, ids []any) (*dbc
 	return gq.SyncWithoutDetachingRelation(parent, relation, ids)
 }
 
+// SyncWithoutDetachingWithPivot is SyncWithPivot minus the detach step. See contractsorm.Orm.SyncWithoutDetachingWithPivot.
+func (r *Orm) SyncWithoutDetachingWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.SyncWithoutDetachingRelationWithPivot(parent, relation, idsWithAttrs)
+}
+
 // Toggle attaches missing entries and detaches existing ones. See contractsorm.Orm.Toggle.
 func (r *Orm) Toggle(parent any, relation string, ids []any) (*dbcontract.SyncResult, error) {
 	gq, ok := r.Query().(*gorm.Query)
@@ -319,6 +346,15 @@ func (r *Orm) Toggle(parent any, relation string, ids []any) (*dbcontract.SyncRe
 		return nil, nil
 	}
 	return gq.ToggleRelation(parent, relation, ids)
+}
+
+// ToggleWithPivot is Toggle with per-ID pivot column values. See contractsorm.Orm.ToggleWithPivot.
+func (r *Orm) ToggleWithPivot(parent any, relation string, idsWithAttrs map[any]map[string]any) (*dbcontract.SyncResult, error) {
+	gq, ok := r.Query().(*gorm.Query)
+	if !ok {
+		return nil, nil
+	}
+	return gq.ToggleRelationWithPivot(parent, relation, idsWithAttrs)
 }
 
 // UpdateExistingPivot updates pivot columns for an already-attached id. See
