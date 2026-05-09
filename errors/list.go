@@ -191,8 +191,7 @@ var (
 	OrmEagerLoadInvalidArgument     = New("invalid argument %T passed to With; expected string, []string, []any, map[string]orm.RelationCallback, or string + callback")
 	OrmEagerLoadCannotAssign        = New("cannot assign eager-loaded rows to field %q on model %s; field must be *Model, []*Model or []Model")
 	OrmEagerLoadEmptyRelation       = New("With received an empty relation name")
-	OrmRelationPivotUsingNotPointer = New("relation Using must be a non-nil pointer to a struct, got %T")
-	OrmRelationPivotUsingTypeMismatch = New("eager-load: related model %s has Pivot field of type %s but relation Using is %s")
+	OrmRelationPivotFieldNotStruct  = New("eager-load: related model %s has %s field of kind %s; pivot hydration target must be a struct")
 
 	PackageConfigKeyExists       = New("config key '%s' already exists,using ReplaceConfig instead if you want to update it")
 	PackageFacadeNotFound        = New("facade %s not found")

@@ -253,15 +253,14 @@ type Many2Many struct {
 	ParentKey string
 	// RelatedKey is the column on the related referenced by RelatedPivotKey. Optional, "id".
 	RelatedKey string
-	// Using is a pointer to a struct describing the pivot row schema (e.g. &RoleUserPivot{}).
-	// When set, the framework reads pivot column values into the related model's `Pivot` field
-	// (which must be of the same struct type — `Pivot RoleUserPivot \`gorm:"-"\``) using the
-	// struct's GORM schema for column-to-field mapping. The struct's DB-tagged fields also drive
-	// the pivot SELECT list — there is no separate column allowlist.
-	//
-	// When nil, no Pivot hydration happens: the related model's Pivot field, if any, is left as
-	// the zero value. Mirrors fedaco's `_using` custom-pivot-class handling.
-	Using any
+	// PivotField is the name of the struct field on the related model that the eager loader will
+	// hydrate with pivot column values (e.g. "Pivot", "UserPivot"). Optional — defaults to
+	// "Pivot". The field's Go type drives both the pivot SELECT list (every db-tagged column on
+	// the struct) and the hydration target. When the related model has no field by this name,
+	// no Pivot hydration happens — the relation still works for joining, just doesn't surface
+	// pivot columns. Use a non-default name when one related model serves multiple m2m relations
+	// with different pivot schemas (e.g. Role with both UserPivot and GroupPivot fields).
+	PivotField string
 	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table; the
 	// framework auto-stamps them on Attach / Sync / Save and updated_at on UpdateExistingPivot.
 	PivotTimestamps bool
@@ -355,8 +354,8 @@ type MorphToMany struct {
 	RelatedPivotKey string
 	ParentKey       string
 	RelatedKey      string
-	// Using — see Many2Many.Using.
-	Using           any
+	// PivotField — see Many2Many.PivotField.
+	PivotField      string
 	PivotTimestamps bool
 	PivotCreatedAt  string
 	PivotUpdatedAt  string
@@ -380,8 +379,8 @@ type MorphedByMany struct {
 	RelatedPivotKey string
 	ParentKey       string
 	RelatedKey      string
-	// Using — see Many2Many.Using.
-	Using           any
+	// PivotField — see Many2Many.PivotField.
+	PivotField      string
 	PivotTimestamps bool
 	PivotCreatedAt  string
 	PivotUpdatedAt  string

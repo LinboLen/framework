@@ -1,7 +1,6 @@
 package gorm
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -9,7 +8,6 @@ import (
 	gormio "gorm.io/gorm"
 
 	contractsorm "github.com/goravel/framework/contracts/database/orm"
-	"github.com/goravel/framework/errors"
 )
 
 // dryRunPivotSQL renders the SQL emitted by a SELECT 1 FROM <table> ... query that pq has
@@ -266,88 +264,46 @@ func TestTouchIfTouching_NoUpdatedAtField_NoOp(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// Using struct-only — wiring + validation tests for the custom Pivot model declaration.
+// PivotField wiring — defaults to "Pivot" when omitted, takes the user-specified value otherwise.
 
-type usingPivot struct {
-	UserID uint `gorm:"column:user_id"`
-	RoleID uint `gorm:"column:role_id"`
-}
-
-type usingUser struct {
+type pivotFieldUser struct {
 	ID    uint
 	Roles []*relRole `gorm:"-"`
 }
 
-func (usingUser) Relations() map[string]contractsorm.Relation {
+func (pivotFieldUser) Relations() map[string]contractsorm.Relation {
 	return map[string]contractsorm.Relation{
-		"Roles": contractsorm.Many2Many{
-			Related: &relRole{},
-			Table:   "using_user_roles",
-			Using:   &usingPivot{},
-		},
+		"Roles":          contractsorm.Many2Many{Related: &relRole{}, Table: "pf_user_roles"},
+		"AuditedRoles":   contractsorm.Many2Many{Related: &relRole{}, Table: "pf_audit_roles", PivotField: "AuditPivot"},
+		"TaggedPosts":    contractsorm.MorphToMany{Related: &morphTag{}, Name: "taggable", PivotField: "TagPivot"},
+		"InversedTagged": contractsorm.MorphedByMany{Related: &morphPost{}, Name: "taggable", PivotField: "InversePivot"},
 	}
 }
 
-func TestDescriptor_Using_Many2Many(t *testing.T) {
-	q := newRelQueryWith(t, &usingUser{})
-	desc, err := resolveRelation(q.instance, &usingUser{}, "Roles")
+func TestDescriptor_PivotField_DefaultsToPivot(t *testing.T) {
+	q := newRelQueryWith(t, &pivotFieldUser{})
+	desc, err := resolveRelation(q.instance, &pivotFieldUser{}, "Roles")
 	assert.NoError(t, err)
-	assert.NotNil(t, desc.pivotUsing)
-	assert.Equal(t, reflect.TypeFor[usingPivot](), desc.pivotUsingType)
+	assert.Equal(t, "Pivot", desc.pivotField)
 }
 
-func TestDescriptor_Using_DefaultsNil(t *testing.T) {
-	q := newRelQueryWith(t, &relUser{})
-	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
+func TestDescriptor_PivotField_CustomMany2Many(t *testing.T) {
+	q := newRelQueryWith(t, &pivotFieldUser{})
+	desc, err := resolveRelation(q.instance, &pivotFieldUser{}, "AuditedRoles")
 	assert.NoError(t, err)
-	assert.Nil(t, desc.pivotUsing)
-	assert.Nil(t, desc.pivotUsingType)
+	assert.Equal(t, "AuditPivot", desc.pivotField)
 }
 
-func TestValidatePivotUsing(t *testing.T) {
-	cases := []struct {
-		name      string
-		using     any
-		wantType  reflect.Type
-		wantError bool
-	}{
-		{"nil passes", nil, nil, false},
-		{"pointer to struct passes", &usingPivot{}, reflect.TypeFor[usingPivot](), false},
-		{"non-pointer struct rejected", usingPivot{}, nil, true},
-		{"pointer to int rejected", new(int), nil, true},
-		{"nil pointer rejected", (*usingPivot)(nil), nil, true},
-	}
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := validatePivotUsing(tt.using)
-			if tt.wantError {
-				assert.True(t, errors.Is(err, errors.OrmRelationPivotUsingNotPointer))
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.wantType, got)
-			}
-		})
-	}
+func TestDescriptor_PivotField_CustomMorphToMany(t *testing.T) {
+	q := newRelQueryWith(t, &pivotFieldUser{})
+	desc, err := resolveRelation(q.instance, &pivotFieldUser{}, "TaggedPosts")
+	assert.NoError(t, err)
+	assert.Equal(t, "TagPivot", desc.pivotField)
 }
 
-// Bad-Using declarations on a relation should surface validatePivotUsing's error through resolve.
-type badUsingUser struct {
-	ID    uint
-	Roles []*relRole `gorm:"-"`
-}
-
-func (badUsingUser) Relations() map[string]contractsorm.Relation {
-	return map[string]contractsorm.Relation{
-		"Roles": contractsorm.Many2Many{
-			Related: &relRole{},
-			Table:   "bad_using_user_roles",
-			Using:   usingPivot{}, // not a pointer — invalid.
-		},
-	}
-}
-
-func TestDescriptor_BadUsing_Errors(t *testing.T) {
-	q := newRelQueryWith(t, &badUsingUser{})
-	_, err := resolveRelation(q.instance, &badUsingUser{}, "Roles")
-	assert.True(t, errors.Is(err, errors.OrmRelationPivotUsingNotPointer))
+func TestDescriptor_PivotField_CustomMorphedByMany(t *testing.T) {
+	q := newRelQueryWith(t, &pivotFieldUser{})
+	desc, err := resolveRelation(q.instance, &pivotFieldUser{}, "InversedTagged")
+	assert.NoError(t, err)
+	assert.Equal(t, "InversePivot", desc.pivotField)
 }

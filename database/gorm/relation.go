@@ -53,13 +53,11 @@ type relationDescriptor struct {
 	pivotTable      string
 	pivotParentRef  referenceKey
 	pivotRelatedRef referenceKey
-	// pivotUsing is a pointer to a struct describing the pivot row schema, declared via
-	// Many2Many.Using (or the morph variants). When non-nil, loadMany2Many / loadMorphToMany
-	// SELECT every db-tagged column on the struct and hydrate the related model's `Pivot`
-	// field (which must be of type pivotUsingType) from those columns. Nil disables Pivot
-	// hydration entirely.
-	pivotUsing     any
-	pivotUsingType reflect.Type // value type (i.e. dereferenced from the user-supplied pointer)
+	// pivotField is the name of the field on the related model that the eager loader hydrates
+	// with pivot column values. Sourced from Many2Many.PivotField (or the morph variants);
+	// defaults to "Pivot". When the related model has no field by this name, no Pivot hydration
+	// happens. The field's Go type drives both the SELECT list and hydration target.
+	pivotField string
 	// pivotTimestamps, when true, causes basePivotRow to stamp created_at / updated_at on every
 	// pivot INSERT and UpdateExistingPivotRelation to inject updated_at on UPDATE.
 	pivotTimestamps      bool
@@ -321,10 +319,6 @@ func descriptorFromMany2Many(db *gormio.DB, parent any, parentTable, name string
 	if err != nil {
 		return nil, err
 	}
-	pivotUsingType, err := validatePivotUsing(rel.Using)
-	if err != nil {
-		return nil, err
-	}
 
 	return &relationDescriptor{
 		kind:         relKindMany2Many,
@@ -344,8 +338,7 @@ func descriptorFromMany2Many(db *gormio.DB, parent any, parentTable, name string
 			foreignTable:  pivotTable,
 			foreignColumn: relatedPivotKey,
 		},
-		pivotUsing:           rel.Using,
-		pivotUsingType:       pivotUsingType,
+		pivotField:           defaultStr(rel.PivotField, "Pivot"),
 		pivotTimestamps:      rel.PivotTimestamps,
 		pivotCreatedAtColumn: defaultStr(rel.PivotCreatedAt, "created_at"),
 		pivotUpdatedAtColumn: defaultStr(rel.PivotUpdatedAt, "updated_at"),
@@ -405,7 +398,7 @@ func descriptorFromMorphToMany(db *gormio.DB, parent any, parentTable, name stri
 	return buildMorphPivotDescriptor(db, parent, parentTable, name,
 		rel.Related, rel.Name, rel.Table, rel.TypeColumn,
 		rel.ForeignPivotKey, rel.RelatedPivotKey, rel.ParentKey, rel.RelatedKey,
-		rel.Using, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
+		rel.PivotField, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
 		inverse,
 	)
 }
@@ -414,12 +407,12 @@ func descriptorFromMorphedByMany(db *gormio.DB, parent any, parentTable, name st
 	return buildMorphPivotDescriptor(db, parent, parentTable, name,
 		rel.Related, rel.Name, rel.Table, rel.TypeColumn,
 		rel.ForeignPivotKey, rel.RelatedPivotKey, rel.ParentKey, rel.RelatedKey,
-		rel.Using, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
+		rel.PivotField, rel.PivotTimestamps, rel.PivotCreatedAt, rel.PivotUpdatedAt,
 		true,
 	)
 }
 
-func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name string, related any, morphName, table, typeCol, foreignPivot, relatedPivot, parentKey, relatedKey string, using any, pivotTimestamps bool, pivotCreatedAt, pivotUpdatedAt string, inverse bool) (*relationDescriptor, error) {
+func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name string, related any, morphName, table, typeCol, foreignPivot, relatedPivot, parentKey, relatedKey string, pivotField string, pivotTimestamps bool, pivotCreatedAt, pivotUpdatedAt string, inverse bool) (*relationDescriptor, error) {
 	if related == nil {
 		return nil, errors.OrmMorphRelationMissingField.Args(name, reflect.TypeOf(parent).String(), "Related")
 	}
@@ -447,10 +440,6 @@ func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name stri
 	if err != nil {
 		return nil, err
 	}
-	pivotUsingType, err := validatePivotUsing(using)
-	if err != nil {
-		return nil, err
-	}
 
 	return &relationDescriptor{
 		kind:            relKindMorphToMany,
@@ -474,8 +463,7 @@ func buildMorphPivotDescriptor(db *gormio.DB, parent any, parentTable, name stri
 			foreignTable:  pivotTable,
 			foreignColumn: relatedPivotKey,
 		},
-		pivotUsing:           using,
-		pivotUsingType:       pivotUsingType,
+		pivotField:           defaultStr(pivotField, "Pivot"),
 		pivotTimestamps:      pivotTimestamps,
 		pivotCreatedAtColumn: defaultStr(pivotCreatedAt, "created_at"),
 		pivotUpdatedAtColumn: defaultStr(pivotUpdatedAt, "updated_at"),
@@ -534,25 +522,6 @@ func relatedKeyFieldType(db *gormio.DB, related any, columnName string) (reflect
 		return field.FieldType, nil
 	}
 	return nil, nil
-}
-
-// validatePivotUsing validates the Many2Many.Using / MorphToMany.Using / MorphedByMany.Using
-// declaration. Accepts nil (Pivot hydration disabled). Otherwise must be a non-nil pointer to a
-// struct (mirroring how Related is required to be). Returns the value type (i.e. the dereferenced
-// pointer type) for downstream use by the eager loader.
-func validatePivotUsing(using any) (reflect.Type, error) {
-	if using == nil {
-		return nil, nil
-	}
-	rv := reflect.ValueOf(using)
-	if rv.Kind() != reflect.Pointer || rv.IsNil() {
-		return nil, errors.OrmRelationPivotUsingNotPointer.Args(using)
-	}
-	elem := rv.Type().Elem()
-	if elem.Kind() != reflect.Struct {
-		return nil, errors.OrmRelationPivotUsingNotPointer.Args(using)
-	}
-	return elem, nil
 }
 
 // alphabeticalPivotName returns the Eloquent-convention default pivot table for a Many2Many
