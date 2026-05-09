@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	gormschema "gorm.io/gorm/schema"
 
 	contractsdatabase "github.com/goravel/framework/contracts/database"
-	contractsorm "github.com/goravel/framework/contracts/database/orm"
 	"github.com/goravel/framework/errors"
 )
 
@@ -283,10 +283,20 @@ func TestMaybeRecurseEmpty_ManyAssignsEmptySlices(t *testing.T) {
 
 // --- Phase D: Pivot column hydration tests --------------------------------
 
+// roleUserPivot is a sample custom Pivot model used by the struct-only Pivot tests below. The
+// gorm tags lock column names so the test data (keyed by db column) maps deterministically into
+// struct fields.
+type roleUserPivot struct {
+	UserID   uint   `gorm:"column:user_id"`
+	RoleID   uint   `gorm:"column:role_id"`
+	Priority string `gorm:"column:priority"`
+	Notes    string `gorm:"column:notes"`
+}
+
 type roleWithPivot struct {
 	ID    uint
 	Name  string
-	Pivot contractsorm.Pivot `gorm:"-"`
+	Pivot roleUserPivot `gorm:"-"`
 }
 
 type roleWithoutPivot struct {
@@ -294,48 +304,119 @@ type roleWithoutPivot struct {
 	Name string
 }
 
-func TestWritePivotField_HydratesMapField(t *testing.T) {
+// roleWithMismatchedPivot has a Pivot field but its type doesn't match the Using struct in the
+// test — used to exercise OrmRelationPivotUsingTypeMismatch.
+type roleWithMismatchedPivot struct {
+	ID    uint
+	Name  string
+	Pivot otherPivot `gorm:"-"`
+}
+
+type otherPivot struct {
+	UserID uint `gorm:"column:user_id"`
+}
+
+func TestWritePivotField_HydratesStructField(t *testing.T) {
 	role := &roleWithPivot{ID: 1, Name: "admin"}
-	rv := reflect.ValueOf(role)
-	data := map[string]any{
+	plan := mustPivotPlan(t, &roleUserPivot{}, &roleWithPivot{})
+	err := writePivotField(t.Context(), reflect.ValueOf(role), map[string]any{
 		"priority": "high",
 		"notes":    "test",
-	}
-
-	ok := writePivotField(rv, data)
-	assert.True(t, ok, "writePivotField should return true when field exists")
-	assert.NotNil(t, role.Pivot)
-	assert.Equal(t, "high", role.Pivot["priority"])
-	assert.Equal(t, "test", role.Pivot["notes"])
+	}, plan)
+	assert.NoError(t, err)
+	assert.Equal(t, "high", role.Pivot.Priority)
+	assert.Equal(t, "test", role.Pivot.Notes)
 }
 
-func TestWritePivotField_InitializesNilMap(t *testing.T) {
-	role := &roleWithPivot{ID: 1, Name: "admin"}
-	assert.Nil(t, role.Pivot, "Pivot should start as nil")
-
-	rv := reflect.ValueOf(role)
-	data := map[string]any{"key": "value"}
-
-	ok := writePivotField(rv, data)
-	assert.True(t, ok)
-	assert.NotNil(t, role.Pivot, "writePivotField should initialize nil map")
-	assert.Equal(t, "value", role.Pivot["key"])
+func TestWritePivotField_TypedColumns(t *testing.T) {
+	role := &roleWithPivot{ID: 1}
+	plan := mustPivotPlan(t, &roleUserPivot{}, &roleWithPivot{})
+	err := writePivotField(t.Context(), reflect.ValueOf(role), map[string]any{
+		"user_id": uint(7),
+		"role_id": uint(99),
+	}, plan)
+	assert.NoError(t, err)
+	assert.Equal(t, uint(7), role.Pivot.UserID)
+	assert.Equal(t, uint(99), role.Pivot.RoleID)
 }
 
-func TestWritePivotField_NoPivotField_ReturnsFalse(t *testing.T) {
+func TestWritePivotField_NoPivotField_ReturnsNil(t *testing.T) {
 	role := &roleWithoutPivot{ID: 1, Name: "admin"}
-	rv := reflect.ValueOf(role)
-	data := map[string]any{"key": "value"}
-
-	ok := writePivotField(rv, data)
-	assert.False(t, ok, "writePivotField should return false when Pivot field doesn't exist")
+	plan := mustPivotPlan(t, &roleUserPivot{}, nil) // related model not validated here.
+	err := writePivotField(t.Context(), reflect.ValueOf(role), map[string]any{"priority": "high"}, plan)
+	assert.NoError(t, err, "writePivotField must silently skip when Pivot field is absent")
+	// roleWithoutPivot has no Pivot field, so nothing to assert beyond no error.
 }
 
-func TestWritePivotField_NonStructInput_ReturnsFalse(t *testing.T) {
-	var notStruct int = 42
-	rv := reflect.ValueOf(&notStruct)
-	data := map[string]any{"key": "value"}
+func TestWritePivotField_UnknownColumn_Skipped(t *testing.T) {
+	role := &roleWithPivot{ID: 1}
+	plan := mustPivotPlan(t, &roleUserPivot{}, &roleWithPivot{})
+	err := writePivotField(t.Context(), reflect.ValueOf(role), map[string]any{
+		"priority":   "high",
+		"unknown_xy": "ignored",
+	}, plan)
+	assert.NoError(t, err)
+	assert.Equal(t, "high", role.Pivot.Priority)
+}
 
-	ok := writePivotField(rv, data)
-	assert.False(t, ok, "writePivotField should return false for non-struct input")
+func TestPreparePivotHydration_NilUsing_ReturnsNil(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc := &relationDescriptor{relatedModel: &roleWithPivot{}, pivotUsing: nil}
+	plan, err := preparePivotHydration(q, desc)
+	assert.NoError(t, err)
+	assert.Nil(t, plan, "nil Using must yield nil plan")
+}
+
+func TestPreparePivotHydration_NoPivotField_ReturnsNil(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc := &relationDescriptor{
+		relatedModel:   &roleWithoutPivot{},
+		pivotUsing:     &roleUserPivot{},
+		pivotUsingType: reflect.TypeFor[roleUserPivot](),
+	}
+	plan, err := preparePivotHydration(q, desc)
+	assert.NoError(t, err)
+	assert.Nil(t, plan, "no Pivot field on related model means nothing to hydrate")
+}
+
+func TestPreparePivotHydration_TypeMismatch_Errors(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc := &relationDescriptor{
+		relatedModel:   &roleWithMismatchedPivot{},
+		pivotUsing:     &roleUserPivot{},
+		pivotUsingType: reflect.TypeFor[roleUserPivot](),
+	}
+	_, err := preparePivotHydration(q, desc)
+	assert.True(t, errors.Is(err, errors.OrmRelationPivotUsingTypeMismatch))
+}
+
+// mustPivotPlan builds a pivotHydrationPlan for use in writePivotField tests, bypassing the
+// related-model field validation in preparePivotHydration. relatedModel is optional — pass nil
+// when the test doesn't need related-model field validation (e.g. the no-Pivot-field case).
+func mustPivotPlan(t *testing.T, using any, relatedModel any) *pivotHydrationPlan {
+	t.Helper()
+	q := newRelQueryWith(t, &relUser{})
+	usingSchema, err := parseGormSchema(q.instance, using)
+	if err != nil {
+		t.Fatalf("parse Using schema: %v", err)
+	}
+	cols := make([]string, 0, len(usingSchema.Fields))
+	byCol := make(map[string]*gormschema.Field, len(usingSchema.Fields))
+	for _, f := range usingSchema.Fields {
+		if f.DBName == "" {
+			continue
+		}
+		cols = append(cols, f.DBName)
+		byCol[f.DBName] = f
+	}
+	usingType := reflect.TypeOf(using)
+	if usingType.Kind() == reflect.Pointer {
+		usingType = usingType.Elem()
+	}
+	_ = relatedModel
+	return &pivotHydrationPlan{
+		extraColumns:   cols,
+		fieldByColumn:  byCol,
+		usingValueType: usingType,
+	}
 }

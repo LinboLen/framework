@@ -3,6 +3,7 @@ package gorm
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"time"
 
 	dbcontract "github.com/goravel/framework/contracts/database/db"
@@ -607,24 +608,14 @@ func (r *Query) AttachRelation(parent any, relation string, ids []any) error {
 	if err != nil {
 		return err
 	}
-	if len(ids) == 0 {
-		return nil
-	}
-	existing, err := r.existingPivotIDs(desc, parentVal, ids)
+	affected, err := r.doAttach(desc, parentVal, ids, nil)
 	if err != nil {
 		return err
 	}
-	rows := make([]map[string]any, 0, len(ids))
-	for _, id := range ids {
-		if _, dup := existing[dictKey(id)]; dup {
-			continue
-		}
-		rows = append(rows, r.basePivotRow(desc, parentVal, id, nil))
+	if affected > 0 {
+		return r.touchIfTouching(desc, parent, parentVal)
 	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return r.freshSession().Table(desc.pivotTable).Create(rows).Error
+	return nil
 }
 
 // AttachWithPivotRelation is Attach with per-row pivot column values.
@@ -633,8 +624,56 @@ func (r *Query) AttachWithPivotRelation(parent any, relation string, idsWithAttr
 	if err != nil {
 		return err
 	}
+	affected, err := r.doAttachWithPivot(desc, parentVal, idsWithAttrs)
+	if err != nil {
+		return err
+	}
+	if affected > 0 {
+		return r.touchIfTouching(desc, parent, parentVal)
+	}
+	return nil
+}
+
+// doAttach is the shared work-horse for AttachRelation / AttachWithPivotRelation. It does not
+// trigger touchIfTouching — callers (the public methods, and syncCore) own when to touch. Returns
+// the number of newly-inserted pivot rows; zero when every id was already attached.
+//
+// idsWithAttrs is optional: when non-nil, attrs from this map are merged into each new row;
+// when nil, ids alone drive the insert.
+func (r *Query) doAttach(desc *relationDescriptor, parentVal any, ids []any, idsWithAttrs map[any]map[string]any) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	existing, err := r.existingPivotIDs(desc, parentVal, ids)
+	if err != nil {
+		return 0, err
+	}
+	rows := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := existing[dictKey(id)]; dup {
+			continue
+		}
+		var attrs map[string]any
+		if idsWithAttrs != nil {
+			attrs = idsWithAttrs[id]
+		}
+		rows = append(rows, r.basePivotRow(desc, parentVal, id, attrs))
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	if err := r.freshSession().Table(desc.pivotTable).Create(rows).Error; err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
+}
+
+// doAttachWithPivot is doAttach for the with-attrs entry shape (map keyed by id). Equivalent in
+// outcome to doAttach with the same attrs; kept separate to avoid materialising an ids slice
+// just to satisfy the doAttach signature when callers already have a map.
+func (r *Query) doAttachWithPivot(desc *relationDescriptor, parentVal any, idsWithAttrs map[any]map[string]any) (int64, error) {
 	if len(idsWithAttrs) == 0 {
-		return nil
+		return 0, nil
 	}
 	ids := make([]any, 0, len(idsWithAttrs))
 	for id := range idsWithAttrs {
@@ -642,7 +681,7 @@ func (r *Query) AttachWithPivotRelation(parent any, relation string, idsWithAttr
 	}
 	existing, err := r.existingPivotIDs(desc, parentVal, ids)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	rows := make([]map[string]any, 0, len(ids))
 	for id, attrs := range idsWithAttrs {
@@ -652,9 +691,12 @@ func (r *Query) AttachWithPivotRelation(parent any, relation string, idsWithAttr
 		rows = append(rows, r.basePivotRow(desc, parentVal, id, attrs))
 	}
 	if len(rows) == 0 {
-		return nil
+		return 0, nil
 	}
-	return r.freshSession().Table(desc.pivotTable).Create(rows).Error
+	if err := r.freshSession().Table(desc.pivotTable).Create(rows).Error; err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
 }
 
 // DetachRelation removes pivot rows linking parent to the given ids. With nil/empty ids, removes
@@ -665,6 +707,20 @@ func (r *Query) DetachRelation(parent any, relation string, ids []any) (int64, e
 	if err != nil {
 		return 0, err
 	}
+	affected, err := r.doDetach(desc, parentVal, ids)
+	if err != nil {
+		return 0, err
+	}
+	if affected > 0 {
+		if err := r.touchIfTouching(desc, parent, parentVal); err != nil {
+			return affected, err
+		}
+	}
+	return affected, nil
+}
+
+// doDetach is the no-touch worker behind DetachRelation. Returns rows affected by the DELETE.
+func (r *Query) doDetach(desc *relationDescriptor, parentVal any, ids []any) (int64, error) {
 	q := r.freshSession().Table(desc.pivotTable).
 		Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.pivotParentRef.foreignColumn)), parentVal)
 	if desc.kind == relKindMorphToMany {
@@ -673,6 +729,7 @@ func (r *Query) DetachRelation(parent any, relation string, ids []any) (int64, e
 	if len(ids) > 0 {
 		q = q.Where(fmt.Sprintf("%s.%s IN ?", quoteIdent(desc.pivotTable), quoteIdent(desc.pivotRelatedRef.foreignColumn)), ids)
 	}
+	q = applyOnPivotQuery(q, desc)
 	res := q.Delete(nil)
 	return res.RowsAffected, res.Error
 }
@@ -732,6 +789,7 @@ func (r *Query) existingPivotIDs(desc *relationDescriptor, parentVal any, ids []
 	if desc.kind == relKindMorphToMany {
 		q = q.Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	}
+	q = applyOnPivotQuery(q, desc)
 	var rows []map[string]any
 	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
@@ -753,6 +811,7 @@ func (r *Query) allPivotIDs(desc *relationDescriptor, parentVal any) ([]any, err
 	if desc.kind == relKindMorphToMany {
 		q = q.Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	}
+	q = applyOnPivotQuery(q, desc)
 	var rows []map[string]any
 	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
@@ -814,17 +873,17 @@ func (r *Query) syncCore(parent any, relation string, ids []any, detachMissing b
 			}
 		}
 		if len(attachIDs) > 0 {
-			if err := r.AttachRelation(parent, relation, attachIDs); err != nil {
+			if _, err := r.doAttach(desc, parentVal, attachIDs, nil); err != nil {
 				return nil, err
 			}
 		}
 		if len(detachIDs) > 0 {
-			if _, err := r.DetachRelation(parent, relation, detachIDs); err != nil {
+			if _, err := r.doDetach(desc, parentVal, detachIDs); err != nil {
 				return nil, err
 			}
 		}
-		out.Attached = attachIDs
-		out.Detached = detachIDs
+		out.Attached = castKeys(attachIDs, desc.relatedKeyType)
+		out.Detached = castKeys(detachIDs, desc.relatedKeyType)
 	default:
 		// Attach anything in `wantSet` that isn't yet attached.
 		var attachIDs []any
@@ -834,11 +893,11 @@ func (r *Query) syncCore(parent any, relation string, ids []any, detachMissing b
 			}
 		}
 		if len(attachIDs) > 0 {
-			if err := r.AttachRelation(parent, relation, attachIDs); err != nil {
+			if _, err := r.doAttach(desc, parentVal, attachIDs, nil); err != nil {
 				return nil, err
 			}
 		}
-		out.Attached = attachIDs
+		out.Attached = castKeys(attachIDs, desc.relatedKeyType)
 
 		if detachMissing {
 			// Detach anything in `currentSet` that isn't in `wantSet`.
@@ -849,14 +908,19 @@ func (r *Query) syncCore(parent any, relation string, ids []any, detachMissing b
 				}
 			}
 			if len(detachIDs) > 0 {
-				if _, err := r.DetachRelation(parent, relation, detachIDs); err != nil {
+				if _, err := r.doDetach(desc, parentVal, detachIDs); err != nil {
 					return nil, err
 				}
 			}
-			out.Detached = detachIDs
+			out.Detached = castKeys(detachIDs, desc.relatedKeyType)
 		}
 	}
 
+	if syncResultChanged(out) {
+		if err := r.touchIfTouching(desc, parent, parentVal); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
 }
 
@@ -923,7 +987,7 @@ func (r *Query) syncCoreWithPivot(parent any, relation string, idsWithAttrs map[
 			}
 		}
 		if len(attachMap) > 0 {
-			if err := r.AttachWithPivotRelation(parent, relation, attachMap); err != nil {
+			if _, err := r.doAttachWithPivot(desc, parentVal, attachMap); err != nil {
 				return nil, err
 			}
 			for id := range attachMap {
@@ -931,11 +995,12 @@ func (r *Query) syncCoreWithPivot(parent any, relation string, idsWithAttrs map[
 			}
 		}
 		if len(detachIDs) > 0 {
-			if _, err := r.DetachRelation(parent, relation, detachIDs); err != nil {
+			if _, err := r.doDetach(desc, parentVal, detachIDs); err != nil {
 				return nil, err
 			}
 		}
-		out.Detached = detachIDs
+		out.Attached = castKeys(out.Attached, desc.relatedKeyType)
+		out.Detached = castKeys(detachIDs, desc.relatedKeyType)
 	default:
 		// Attach anything in `wantSet` that isn't yet attached; update existing if attrs non-empty.
 		attachMap := make(map[any]map[string]any)
@@ -947,7 +1012,7 @@ func (r *Query) syncCoreWithPivot(parent any, relation string, idsWithAttrs map[
 				// Already attached — if attrs non-empty, update the pivot row.
 				attrs := idsWithAttrs[v]
 				if len(attrs) > 0 {
-					if _, err := r.UpdateExistingPivotRelation(parent, relation, v, attrs); err != nil {
+					if _, err := r.doUpdateExistingPivot(desc, parentVal, v, attrs); err != nil {
 						return nil, err
 					}
 					updateIDs = append(updateIDs, v)
@@ -955,14 +1020,15 @@ func (r *Query) syncCoreWithPivot(parent any, relation string, idsWithAttrs map[
 			}
 		}
 		if len(attachMap) > 0 {
-			if err := r.AttachWithPivotRelation(parent, relation, attachMap); err != nil {
+			if _, err := r.doAttachWithPivot(desc, parentVal, attachMap); err != nil {
 				return nil, err
 			}
 			for id := range attachMap {
 				out.Attached = append(out.Attached, id)
 			}
 		}
-		out.Updated = updateIDs
+		out.Attached = castKeys(out.Attached, desc.relatedKeyType)
+		out.Updated = castKeys(updateIDs, desc.relatedKeyType)
 
 		if detachMissing {
 			// Detach anything in `currentSet` that isn't in `wantSet`.
@@ -973,15 +1039,26 @@ func (r *Query) syncCoreWithPivot(parent any, relation string, idsWithAttrs map[
 				}
 			}
 			if len(detachIDs) > 0 {
-				if _, err := r.DetachRelation(parent, relation, detachIDs); err != nil {
+				if _, err := r.doDetach(desc, parentVal, detachIDs); err != nil {
 					return nil, err
 				}
 			}
-			out.Detached = detachIDs
+			out.Detached = castKeys(detachIDs, desc.relatedKeyType)
 		}
 	}
 
+	if syncResultChanged(out) {
+		if err := r.touchIfTouching(desc, parent, parentVal); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
+}
+
+// syncResultChanged reports whether out indicates any actual pivot-table mutation. Used by
+// syncCore / syncCoreWithPivot to decide whether to call touchIfTouching at the end.
+func syncResultChanged(out *dbcontract.SyncResult) bool {
+	return len(out.Attached) > 0 || len(out.Detached) > 0 || len(out.Updated) > 0
 }
 
 // UpdateExistingPivotRelation updates pivot columns for an already-attached id. When
@@ -992,6 +1069,21 @@ func (r *Query) UpdateExistingPivotRelation(parent any, relation string, id any,
 	if err != nil {
 		return 0, err
 	}
+	affected, err := r.doUpdateExistingPivot(desc, parentVal, id, attrs)
+	if err != nil {
+		return 0, err
+	}
+	if affected > 0 {
+		if err := r.touchIfTouching(desc, parent, parentVal); err != nil {
+			return affected, err
+		}
+	}
+	return affected, nil
+}
+
+// doUpdateExistingPivot is the no-touch worker behind UpdateExistingPivotRelation. Returns the
+// number of pivot rows actually updated.
+func (r *Query) doUpdateExistingPivot(desc *relationDescriptor, parentVal any, id any, attrs map[string]any) (int64, error) {
 	if len(attrs) == 0 && !desc.pivotTimestamps {
 		return 0, nil
 	}
@@ -1010,6 +1102,7 @@ func (r *Query) UpdateExistingPivotRelation(parent any, relation string, id any,
 	if desc.kind == relKindMorphToMany {
 		q = q.Where(fmt.Sprintf("%s.%s = ?", quoteIdent(desc.pivotTable), quoteIdent(desc.morphTypeColumn)), desc.morphValue)
 	}
+	q = applyOnPivotQuery(q, desc)
 	res := q.Updates(updateMap)
 	return res.RowsAffected, res.Error
 }
@@ -1073,6 +1166,44 @@ func (r *Query) applyAttrMap(dest any, attrs map[string]any) error {
 	return nil
 }
 
+// touchIfTouching bumps parent's updated_at column when desc.touches is true. Silently no-ops
+// when desc.touches is false, when the parent's schema doesn't expose an updated_at field, or
+// when the parent has no primary-key column to anchor the WHERE clause. Mirrors fedaco's
+// touchIfTouching on BelongsToMany.
+//
+// Called at the tail end of public Sync / Attach / Detach / Toggle / UpdateExistingPivot methods,
+// and only when the operation actually affected pivot rows. The internal doAttach / doDetach /
+// doUpdateExistingPivot helpers do NOT touch — sync* paths chain multiple internal calls and
+// touch at most once at the end via this helper.
+func (r *Query) touchIfTouching(desc *relationDescriptor, parent any, parentVal any) error {
+	if !desc.touches {
+		return nil
+	}
+	parentSchema, err := parseGormSchema(r.instance, parent)
+	if err != nil {
+		return err
+	}
+	field, ok := parentSchema.FieldsByDBName["updated_at"]
+	if !ok {
+		// Parent doesn't have an updated_at column — silently skip.
+		return nil
+	}
+	if len(parentSchema.PrimaryFields) == 0 {
+		return nil
+	}
+	pkColumn := parentSchema.PrimaryFields[0].DBName
+	now := time.Now()
+	res := r.freshSession().Table(parentSchema.Table).
+		Where(fmt.Sprintf("%s = ?", quoteIdent(pkColumn)), parentVal).
+		Update(field.DBName, now)
+	if res.Error != nil {
+		return res.Error
+	}
+	// Mirror the change into the in-memory parent struct so subsequent reads see the bump.
+	parentRV := reflect.ValueOf(parent).Elem()
+	return field.Set(r.ctx, parentRV, now)
+}
+
 // kindName returns a human-friendly name for a relationKind, used in error messages.
 func kindName(k relationKind) string {
 	switch k {
@@ -1098,4 +1229,83 @@ func kindName(k relationKind) string {
 		return "hasManyThrough"
 	}
 	return fmt.Sprintf("kind=%d", k)
+}
+
+// castKeys returns a copy of ids with each value normalised to keyType (the related model's PK
+// type). Used by Sync* / Toggle* to ensure SyncResult elements carry a stable Go type regardless
+// of what the caller passed in or what GORM scanned out of the pivot table.
+//
+// Mirrors fedaco's _castKeys / _getTypeSwapValue. Returns nil for a nil input slice (preserving
+// the "no rows touched" signal).
+func castKeys(ids []any, keyType reflect.Type) []any {
+	if ids == nil {
+		return nil
+	}
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = castKey(id, keyType)
+	}
+	return out
+}
+
+// castKey converts v to the Go type t, handling the common cross-type cases (int/uint/float
+// numeric widening + narrowing, string ↔ numeric). Returns v unchanged when t is nil, when v is
+// already the right type, or when conversion isn't safely representable.
+func castKey(v any, t reflect.Type) any {
+	if v == nil || t == nil {
+		return v
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Type() == t {
+		return v
+	}
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		switch rv.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return rv.Convert(t).Interface()
+		case reflect.String:
+			if i, err := strconv.ParseInt(rv.String(), 10, 64); err == nil {
+				return reflect.ValueOf(i).Convert(t).Interface()
+			}
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		switch rv.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return rv.Convert(t).Interface()
+		case reflect.String:
+			if u, err := strconv.ParseUint(rv.String(), 10, 64); err == nil {
+				return reflect.ValueOf(u).Convert(t).Interface()
+			}
+		}
+	case reflect.Float32, reflect.Float64:
+		switch rv.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return rv.Convert(t).Interface()
+		case reflect.String:
+			if f, err := strconv.ParseFloat(rv.String(), 64); err == nil {
+				return reflect.ValueOf(f).Convert(t).Interface()
+			}
+		}
+	case reflect.String:
+		// Numeric / []byte → string. Avoid reflect.Convert here because int→string interprets the
+		// int as a Unicode code point (e.g. 65 → "A"), not a decimal digit string.
+		switch rv.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return fmt.Sprint(v)
+		case reflect.Slice:
+			if rv.Type().Elem().Kind() == reflect.Uint8 {
+				return string(rv.Bytes())
+			}
+		}
+	}
+	return v
 }

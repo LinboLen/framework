@@ -1,6 +1,7 @@
 package gorm
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -406,4 +407,78 @@ func TestToggleRelationWithPivot_UnsupportedKind_HasMany(t *testing.T) {
 	q := newRelQueryWith(t, &relUser{})
 	_, err := q.ToggleRelationWithPivot(&relUser{ID: 1}, "Books", map[any]map[string]any{uint(1): {"priority": "high"}})
 	assert.True(t, errors.Is(err, errors.OrmRelationKindNotSupported))
+}
+
+// Phase H tests: castKey — normalises SyncResult ids back to the related model's PK type.
+
+func TestCastKey(t *testing.T) {
+	uintT := reflect.TypeFor[uint]()
+	intT := reflect.TypeFor[int]()
+	int64T := reflect.TypeFor[int64]()
+	stringT := reflect.TypeFor[string]()
+	float64T := reflect.TypeFor[float64]()
+
+	cases := []struct {
+		name string
+		in   any
+		t    reflect.Type
+		want any
+	}{
+		{"nil value passthrough", nil, uintT, nil},
+		{"nil type passthrough", uint(7), nil, uint(7)},
+		{"same-type passthrough", uint(7), uintT, uint(7)},
+		{"int -> uint", int(7), uintT, uint(7)},
+		{"int64 -> uint (gorm scan typical)", int64(42), uintT, uint(42)},
+		{"uint -> int", uint(7), intT, int(7)},
+		{"uint -> int64", uint(7), int64T, int64(7)},
+		{"float -> int", float64(3), intT, int(3)},
+		{"string numeric -> uint", "42", uintT, uint(42)},
+		{"string numeric -> int (negative)", "-7", intT, int(-7)},
+		{"string numeric -> float", "3.14", float64T, float64(3.14)},
+		{"int -> string (decimal, not Unicode)", int(65), stringT, "65"},
+		{"uint -> string", uint(99), stringT, "99"},
+		{"float -> string", float64(3.14), stringT, "3.14"},
+		{"[]byte -> string", []byte("abc"), stringT, "abc"},
+		{"non-numeric string -> uint passthrough", "abc", uintT, "abc"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := castKey(tt.in, tt.t)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCastKeys(t *testing.T) {
+	uintT := reflect.TypeFor[uint]()
+
+	t.Run("nil slice passthrough", func(t *testing.T) {
+		assert.Nil(t, castKeys(nil, uintT))
+	})
+	t.Run("empty slice", func(t *testing.T) {
+		assert.Equal(t, []any{}, castKeys([]any{}, uintT))
+	})
+	t.Run("mixed input types -> uniform uint", func(t *testing.T) {
+		got := castKeys([]any{int(1), int64(2), "3", uint(4)}, uintT)
+		assert.Equal(t, []any{uint(1), uint(2), uint(3), uint(4)}, got)
+	})
+	t.Run("nil keyType leaves values untouched", func(t *testing.T) {
+		got := castKeys([]any{int(1), "2"}, nil)
+		assert.Equal(t, []any{int(1), "2"}, got)
+	})
+}
+
+// relatedKeyType wiring: descriptor must carry the related model's PK type so castKey can use it.
+func TestDescriptor_RelatedKeyType_Many2Many(t *testing.T) {
+	q := newRelQueryWith(t, &relUser{})
+	desc, err := resolveRelation(q.instance, &relUser{}, "Roles")
+	assert.NoError(t, err)
+	assert.Equal(t, reflect.TypeFor[uint](), desc.relatedKeyType)
+}
+
+func TestDescriptor_RelatedKeyType_MorphToMany(t *testing.T) {
+	q := newRelQueryWith(t, &morphPost{})
+	desc, err := resolveRelation(q.instance, &morphPost{}, "Tags")
+	assert.NoError(t, err)
+	assert.Equal(t, reflect.TypeFor[uint](), desc.relatedKeyType)
 }

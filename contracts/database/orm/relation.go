@@ -11,6 +11,35 @@ type RelationCallback func(query Query) Query
 // polymorphic convention).
 type MorphRelationCallback func(query Query, morphType string) Query
 
+// PivotQuery is a small builder surface for scoping the pivot-table SQL emitted by Sync / Attach
+// duplicate-skip / Detach / UpdateExistingPivot. It is intentionally narrower than the full Query
+// interface — only the WHERE-style methods that make sense on a single-table pivot read/write are
+// exposed. Mirrors fedaco's `wherePivot` / `wherePivotIn` / `wherePivotNull` accumulators on
+// BelongsToMany.
+//
+// NOTE: PivotQuery filters only SELECT / UPDATE / DELETE on the pivot table — equality conditions
+// added here are NOT auto-injected into INSERT rows on Attach. Callers that need the conditions
+// to appear on inserted rows should pass them through Attach attrs.
+type PivotQuery interface {
+	// Where adds a `column op value` clause to the pivot query. operator defaults to "=" when
+	// only two args are passed (column, value).
+	Where(column string, args ...any) PivotQuery
+	// WhereIn adds a `column IN (...)` clause to the pivot query.
+	WhereIn(column string, values []any) PivotQuery
+	// WhereNotIn adds a `column NOT IN (...)` clause to the pivot query.
+	WhereNotIn(column string, values []any) PivotQuery
+	// WhereNull adds a `column IS NULL` clause to the pivot query.
+	WhereNull(column string) PivotQuery
+	// WhereNotNull adds a `column IS NOT NULL` clause to the pivot query.
+	WhereNotNull(column string) PivotQuery
+}
+
+// PivotCallback scopes pivot-table reads (and the corresponding diff-driven writes) for a
+// BelongsToMany relation. Declared via Many2Many / MorphToMany / MorphedByMany's OnPivotQuery
+// field; applied automatically to Sync / Detach / UpdateExistingPivot and Attach's duplicate-
+// detection SELECT.
+type PivotCallback func(query PivotQuery) PivotQuery
+
 // QueryWithRelations is the Go port of the QueriesRelationships mixin from Laravel and the 1:1
 // TypeScript port in fedaco at libs/fedaco/src/fedaco/mixins/queries-relationships.ts.
 //
@@ -224,10 +253,15 @@ type Many2Many struct {
 	ParentKey string
 	// RelatedKey is the column on the related referenced by RelatedPivotKey. Optional, "id".
 	RelatedKey string
-	// PivotColumns are extra pivot columns to surface on eager-loaded results via the related
-	// model's `Pivot orm.Pivot` field. See the Pivot type alias for the read-side hydration
-	// convention.
-	PivotColumns []string
+	// Using is a pointer to a struct describing the pivot row schema (e.g. &RoleUserPivot{}).
+	// When set, the framework reads pivot column values into the related model's `Pivot` field
+	// (which must be of the same struct type — `Pivot RoleUserPivot \`gorm:"-"\``) using the
+	// struct's GORM schema for column-to-field mapping. The struct's DB-tagged fields also drive
+	// the pivot SELECT list — there is no separate column allowlist.
+	//
+	// When nil, no Pivot hydration happens: the related model's Pivot field, if any, is left as
+	// the zero value. Mirrors fedaco's `_using` custom-pivot-class handling.
+	Using any
 	// PivotTimestamps, when true, expects created_at / updated_at on the pivot table; the
 	// framework auto-stamps them on Attach / Sync / Save and updated_at on UpdateExistingPivot.
 	PivotTimestamps bool
@@ -238,6 +272,15 @@ type Many2Many struct {
 	// Only consulted when PivotTimestamps is true.
 	PivotUpdatedAt string
 	OnQuery        RelationCallback
+	// OnPivotQuery scopes pivot-table SELECT / UPDATE / DELETE for Sync / Detach /
+	// UpdateExistingPivot operations on this relation. Equality conditions added here are NOT
+	// auto-injected into Attach INSERT rows — pass them via Attach attrs if needed.
+	OnPivotQuery PivotCallback
+	// Touches, when true, causes Sync / Attach / Detach / Toggle / UpdateExistingPivot on this
+	// relation to bump the parent's `updated_at` after the pivot write completes (and only when
+	// the operation actually changed pivot rows). Mirrors fedaco's `touchIfTouching`. Silently
+	// no-ops when the parent's schema doesn't carry an updated_at field.
+	Touches bool
 }
 
 func (Many2Many) Kind() RelationKind { return KindMany2Many }
@@ -312,11 +355,16 @@ type MorphToMany struct {
 	RelatedPivotKey string
 	ParentKey       string
 	RelatedKey      string
-	PivotColumns    []string
+	// Using — see Many2Many.Using.
+	Using           any
 	PivotTimestamps bool
 	PivotCreatedAt  string
 	PivotUpdatedAt  string
 	OnQuery         RelationCallback
+	// OnPivotQuery — see Many2Many.OnPivotQuery.
+	OnPivotQuery PivotCallback
+	// Touches — see Many2Many.Touches.
+	Touches bool
 }
 
 func (MorphToMany) Kind() RelationKind { return KindMorphToMany }
@@ -332,11 +380,16 @@ type MorphedByMany struct {
 	RelatedPivotKey string
 	ParentKey       string
 	RelatedKey      string
-	PivotColumns    []string
+	// Using — see Many2Many.Using.
+	Using           any
 	PivotTimestamps bool
 	PivotCreatedAt  string
 	PivotUpdatedAt  string
 	OnQuery         RelationCallback
+	// OnPivotQuery — see Many2Many.OnPivotQuery.
+	OnPivotQuery PivotCallback
+	// Touches — see Many2Many.Touches.
+	Touches bool
 }
 
 func (MorphedByMany) Kind() RelationKind { return KindMorphedByMany }
@@ -378,25 +431,6 @@ type HasManyThrough struct {
 }
 
 func (HasManyThrough) Kind() RelationKind { return KindHasManyThrough }
-
-// Pivot is the carrier for extra pivot-table columns surfaced on eager-loaded models in the
-// BelongsToMany family (Many2Many, MorphToMany, MorphedByMany). When a related model declares
-// a `Pivot orm.Pivot` field tagged `gorm:"-"`, the eager loader pulls every column listed in the
-// relation's PivotColumns (plus the timestamp columns when PivotTimestamps is true) and writes
-// them into that field keyed by column name.
-//
-// Example:
-//
-//	type Role struct {
-//	    ID    uint
-//	    Name  string
-//	    Pivot orm.Pivot `gorm:"-"`   // populated by With("Roles") / Load("Roles")
-//	}
-//
-// The convention is eager-load only — NewRelation(parent, "Roles").Get(&roles) returns the bare
-// related rows without populating the Pivot field. Callers that need ad-hoc pivot reads should
-// use eager loading.
-type Pivot = map[string]any
 
 // ModelWithRelations is implemented by every model that declares relationships. The single map
 // returned by Relations() is the only place relations are declared. GORM relation struct tags

@@ -1,6 +1,7 @@
 package gorm
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -406,32 +407,23 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 	pivotParentCol := desc.pivotParentRef.foreignColumn
 	pivotRelatedCol := desc.pivotRelatedRef.foreignColumn
 
-	// Check if the related model has a Pivot field — if yes, we'll SELECT extra pivot columns.
+	// Check if the related model has a Pivot field — if yes, we'll SELECT extra pivot columns
+	// using the desc.pivotUsing struct schema. struct-only: when desc.pivotUsing is nil, no pivot
+	// hydration happens regardless of whether the related model has a Pivot field.
 	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
 	if err != nil {
 		return err
 	}
-	hasPivotField := false
-	relatedType := reflect.TypeOf(desc.relatedModel)
-	if relatedType.Kind() == reflect.Ptr {
-		relatedType = relatedType.Elem()
-	}
-	if relatedType.Kind() == reflect.Struct {
-		if _, ok := relatedType.FieldByName("Pivot"); ok {
-			hasPivotField = true
-		}
+	pivotPlan, err := preparePivotHydration(r, desc)
+	if err != nil {
+		return err
 	}
 
-	// Build the pivot SELECT list: always include the two FK columns, plus extra columns if the
-	// related model has a Pivot field and desc.pivotColumns or desc.pivotTimestamps is set.
+	// Build the pivot SELECT list: always include the two FK columns, plus the columns reported
+	// by the Using-struct hydration plan when present.
 	pivotSelectCols := []string{pivotParentCol, pivotRelatedCol}
-	var extraPivotCols []string
-	if hasPivotField {
-		extraPivotCols = append(extraPivotCols, desc.pivotColumns...)
-		if desc.pivotTimestamps {
-			extraPivotCols = append(extraPivotCols, desc.pivotCreatedAtColumn, desc.pivotUpdatedAtColumn)
-		}
-		pivotSelectCols = append(pivotSelectCols, extraPivotCols...)
+	if pivotPlan != nil {
+		pivotSelectCols = append(pivotSelectCols, pivotPlan.extraColumns...)
 	}
 
 	// Convert []string to []interface{} for GORM's Select signature.
@@ -484,14 +476,14 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 		relatedByID[dictKey(val)] = row
 	}
 
-	// Build pivot data map: key = relatedID, value = map of extra pivot columns.
+	// Build pivot data map: key = relatedID, value = map of pivot column values to hydrate.
 	var pivotDataByRelatedID map[string]map[string]any
-	if hasPivotField && len(extraPivotCols) > 0 {
+	if pivotPlan != nil {
 		pivotDataByRelatedID = make(map[string]map[string]any, len(pivotRows))
 		for _, p := range pivotRows {
 			relatedKey := dictKey(p[pivotRelatedCol])
-			data := make(map[string]any, len(extraPivotCols))
-			for _, col := range extraPivotCols {
+			data := make(map[string]any, len(pivotPlan.extraColumns))
+			for _, col := range pivotPlan.extraColumns {
 				if val, ok := p[col]; ok {
 					data[col] = val
 				}
@@ -514,12 +506,14 @@ func (r *Query) loadMany2Many(parents []reflect.Value, parentModel any, desc *re
 	}
 
 	// Hydrate Pivot field on each related row if we have pivot data.
-	if hasPivotField && len(pivotDataByRelatedID) > 0 {
+	if pivotPlan != nil && len(pivotDataByRelatedID) > 0 {
 		for _, row := range rows {
 			val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
 			relatedKey := dictKey(val)
 			if data, ok := pivotDataByRelatedID[relatedKey]; ok {
-				writePivotField(row, data)
+				if err := writePivotField(r.ctx, row, data, pivotPlan); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -549,32 +543,23 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 	pivotParentCol := desc.pivotParentRef.foreignColumn
 	pivotRelatedCol := desc.pivotRelatedRef.foreignColumn
 
-	// Check if the related model has a Pivot field — if yes, we'll SELECT extra pivot columns.
+	// Check if the related model has a Pivot field — if yes, we'll SELECT extra pivot columns
+	// using the desc.pivotUsing struct schema. struct-only: when desc.pivotUsing is nil, no pivot
+	// hydration happens regardless of whether the related model has a Pivot field.
 	relatedSchema, err := parseGormSchema(r.instance, desc.relatedModel)
 	if err != nil {
 		return err
 	}
-	hasPivotField := false
-	relatedType := reflect.TypeOf(desc.relatedModel)
-	if relatedType.Kind() == reflect.Ptr {
-		relatedType = relatedType.Elem()
-	}
-	if relatedType.Kind() == reflect.Struct {
-		if _, ok := relatedType.FieldByName("Pivot"); ok {
-			hasPivotField = true
-		}
+	pivotPlan, err := preparePivotHydration(r, desc)
+	if err != nil {
+		return err
 	}
 
-	// Build the pivot SELECT list: always include the two FK columns, plus extra columns if the
-	// related model has a Pivot field and desc.pivotColumns or desc.pivotTimestamps is set.
+	// Build the pivot SELECT list: always include the two FK columns, plus the columns reported
+	// by the Using-struct hydration plan when present.
 	pivotSelectCols := []string{pivotParentCol, pivotRelatedCol}
-	var extraPivotCols []string
-	if hasPivotField {
-		extraPivotCols = append(extraPivotCols, desc.pivotColumns...)
-		if desc.pivotTimestamps {
-			extraPivotCols = append(extraPivotCols, desc.pivotCreatedAtColumn, desc.pivotUpdatedAtColumn)
-		}
-		pivotSelectCols = append(pivotSelectCols, extraPivotCols...)
+	if pivotPlan != nil {
+		pivotSelectCols = append(pivotSelectCols, pivotPlan.extraColumns...)
 	}
 
 	// Convert []string to []interface{} for GORM's Select signature.
@@ -628,14 +613,14 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 		relatedByID[dictKey(val)] = row
 	}
 
-	// Build pivot data map: key = relatedID, value = map of extra pivot columns.
+	// Build pivot data map: key = relatedID, value = map of pivot column values to hydrate.
 	var pivotDataByRelatedID map[string]map[string]any
-	if hasPivotField && len(extraPivotCols) > 0 {
+	if pivotPlan != nil {
 		pivotDataByRelatedID = make(map[string]map[string]any, len(pivotRows))
 		for _, p := range pivotRows {
 			relatedKey := dictKey(p[pivotRelatedCol])
-			data := make(map[string]any, len(extraPivotCols))
-			for _, col := range extraPivotCols {
+			data := make(map[string]any, len(pivotPlan.extraColumns))
+			for _, col := range pivotPlan.extraColumns {
 				if val, ok := p[col]; ok {
 					data[col] = val
 				}
@@ -658,12 +643,14 @@ func (r *Query) loadMorphToMany(parents []reflect.Value, parentModel any, desc *
 	}
 
 	// Hydrate Pivot field on each related row if we have pivot data.
-	if hasPivotField && len(pivotDataByRelatedID) > 0 {
+	if pivotPlan != nil && len(pivotDataByRelatedID) > 0 {
 		for _, row := range rows {
 			val, _ := relatedPKField.ValueOf(r.ctx, row.Elem())
 			relatedKey := dictKey(val)
 			if data, ok := pivotDataByRelatedID[relatedKey]; ok {
-				writePivotField(row, data)
+				if err := writePivotField(r.ctx, row, data, pivotPlan); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -1105,35 +1092,89 @@ func setRelationField(parent reflect.Value, fieldName string, rows []reflect.Val
 	return errors.OrmEagerLoadCannotAssign.Args(fieldName, parent.Type().String())
 }
 
-// writePivotField checks if rv (a related model instance) has an exported field named "Pivot" of
-// type orm.Pivot (map[string]any), and if so writes data into it. Returns true if the field exists
-// and was written, false otherwise. Used by loadMany2Many / loadMorphToMany to hydrate pivot column
-// values onto eager-loaded models.
-func writePivotField(rv reflect.Value, data map[string]any) bool {
-	if rv.Kind() == reflect.Ptr {
+// pivotHydrationPlan precomputes everything writePivotField needs to copy a row of pivot column
+// values into the Pivot struct field on each eager-loaded related model. It is built once per
+// loadMany2Many / loadMorphToMany invocation by preparePivotHydration. nil means "no Pivot
+// hydration" (desc.pivotUsing is nil, or the related model has no Pivot field).
+type pivotHydrationPlan struct {
+	// extraColumns is the pivot SELECT list contributed by the Using struct (every db-tagged
+	// field's column name), not including the two FK columns which loadMany2Many always selects.
+	extraColumns []string
+	// fieldByColumn maps each db column name to the *gormschema.Field that owns it on the Using
+	// struct. Used by writePivotField to set struct fields from the SELECT row.
+	fieldByColumn map[string]*gormschema.Field
+	// usingValueType is the value type of desc.pivotUsing (i.e. dereferenced from the user-
+	// supplied pointer). The related model's Pivot field must be of this type — otherwise we
+	// return an OrmRelationPivotUsingTypeMismatch error.
+	usingValueType reflect.Type
+}
+
+// preparePivotHydration inspects desc + the related model's Pivot field type and returns a plan
+// for hydrating that field from pivot SELECT rows. Returns nil (no error) when there's nothing
+// to hydrate (no Using declared, or related model has no Pivot field). Returns an error if the
+// related model's Pivot field type doesn't match desc.pivotUsing's element type.
+func preparePivotHydration(r *Query, desc *relationDescriptor) (*pivotHydrationPlan, error) {
+	if desc.pivotUsing == nil || desc.pivotUsingType == nil {
+		return nil, nil
+	}
+	relatedType := reflect.TypeOf(desc.relatedModel)
+	if relatedType.Kind() == reflect.Pointer {
+		relatedType = relatedType.Elem()
+	}
+	if relatedType.Kind() != reflect.Struct {
+		return nil, nil
+	}
+	pivotField, ok := relatedType.FieldByName("Pivot")
+	if !ok {
+		// Using declared but no Pivot field on the related model — nothing to hydrate (the column
+		// data still flows through, just isn't surfaced anywhere).
+		return nil, nil
+	}
+	if pivotField.Type != desc.pivotUsingType {
+		return nil, errors.OrmRelationPivotUsingTypeMismatch.Args(
+			relatedType.String(), pivotField.Type.String(), desc.pivotUsingType.String(),
+		)
+	}
+	usingSchema, err := parseGormSchema(r.instance, desc.pivotUsing)
+	if err != nil {
+		return nil, err
+	}
+	cols := make([]string, 0, len(usingSchema.Fields))
+	byCol := make(map[string]*gormschema.Field, len(usingSchema.Fields))
+	for _, f := range usingSchema.Fields {
+		if f.DBName == "" {
+			continue
+		}
+		cols = append(cols, f.DBName)
+		byCol[f.DBName] = f
+	}
+	return &pivotHydrationPlan{
+		extraColumns:   cols,
+		fieldByColumn:  byCol,
+		usingValueType: desc.pivotUsingType,
+	}, nil
+}
+
+// writePivotField copies the column values in data into rv's Pivot struct field, using plan to
+// resolve column names to *gormschema.Fields on the Using struct. Caller guarantees plan is
+// non-nil and rv has a Pivot field whose type matches plan.usingValueType (verified during
+// preparePivotHydration).
+func writePivotField(ctx context.Context, rv reflect.Value, data map[string]any, plan *pivotHydrationPlan) error {
+	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
-	if rv.Kind() != reflect.Struct {
-		return false
+	pivotField := rv.FieldByName("Pivot")
+	if !pivotField.IsValid() || !pivotField.CanSet() {
+		return nil
 	}
-	field := rv.FieldByName("Pivot")
-	if !field.IsValid() || !field.CanSet() {
-		return false
+	for col, val := range data {
+		f, ok := plan.fieldByColumn[col]
+		if !ok {
+			continue
+		}
+		if err := f.Set(ctx, pivotField, val); err != nil {
+			return err
+		}
 	}
-	// Check type: must be map[string]any (the orm.Pivot alias).
-	if field.Kind() != reflect.Map || field.Type().Key().Kind() != reflect.String {
-		return false
-	}
-	if field.Type().Elem().Kind() != reflect.Interface {
-		return false
-	}
-	// Initialize if nil.
-	if field.IsNil() {
-		field.Set(reflect.MakeMap(field.Type()))
-	}
-	// Copy data into the map.
-	for k, v := range data {
-		field.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
-	}
-	return true
+	return nil
 }
