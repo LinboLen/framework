@@ -11,7 +11,6 @@ import (
 	contractsfoundation "github.com/goravel/framework/contracts/foundation"
 	"github.com/goravel/framework/errors"
 	mocksconfig "github.com/goravel/framework/mocks/config"
-	mocksconsole "github.com/goravel/framework/mocks/console"
 	mocksfoundation "github.com/goravel/framework/mocks/foundation"
 	mocksroute "github.com/goravel/framework/mocks/route"
 )
@@ -67,17 +66,25 @@ func TestServiceProviderRegister(t *testing.T) {
 
 func TestServiceProviderBoot(t *testing.T) {
 	provider := &ServiceProvider{}
-	app := mocksfoundation.NewApplication(t)
-	artisan := mocksconsole.NewArtisan(t)
-	route := mocksroute.NewRoute(t)
 
-	app.EXPECT().MakeArtisan().Return(artisan).Once()
-	app.EXPECT().MakeRoute().Return(route).Once()
-	artisan.EXPECT().Register(mock.MatchedBy(func(commands []contractsconsole.Command) bool {
-		return len(commands) == 1 && commands[0] != nil
-	})).Once()
+	t.Run("route facade not set", func(t *testing.T) {
+		app := mocksfoundation.NewApplication(t)
+		app.EXPECT().MakeRoute().Return(nil).Once()
 
-	provider.Boot(app)
+		provider.Boot(app)
+	})
+
+	t.Run("register route commands", func(t *testing.T) {
+		app := mocksfoundation.NewApplication(t)
+		route := mocksroute.NewRoute(t)
+
+		app.EXPECT().MakeRoute().Return(route).Once()
+		app.EXPECT().Commands(mock.MatchedBy(func(commands []contractsconsole.Command) bool {
+			return len(commands) == 1 && commands[0] != nil
+		})).Once()
+
+		provider.Boot(app)
+	})
 }
 
 func TestServiceProviderRunners(t *testing.T) {
