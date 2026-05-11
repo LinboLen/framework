@@ -33,13 +33,21 @@ type ImagePrompt struct {
 	Timeout     time.Duration
 }
 
+type AudioPrompt struct {
+	Prompt       string
+	Model        string
+	Voice        string
+	Instructions string
+	Timeout      time.Duration
+}
+
 // Provider defines low-level model interactions (text generation).
 // Future: extend with TextProvider, ImageProvider, AudioProvider, etc.
 type Provider interface {
 	// Prompt executes a non-streaming model request.
-	Prompt(ctx context.Context, prompt AgentPrompt) (Response, error)
+	Prompt(ctx context.Context, prompt AgentPrompt) (AgentResponse, error)
 	// Stream executes a streaming model request and returns a streamable response.
-	Stream(ctx context.Context, prompt AgentPrompt) (StreamableResponse, error)
+	Stream(ctx context.Context, prompt AgentPrompt) (StreamableAgentResponse, error)
 }
 
 // ImageProvider is implemented by providers that support image generation.
@@ -48,10 +56,17 @@ type ImageProvider interface {
 	Image(ctx context.Context, prompt ImagePrompt) (ImageResponse, error)
 }
 
+// AudioProvider is implemented by providers that support audio generation.
+type AudioProvider interface {
+	// Audio executes a text-to-speech request.
+	Audio(ctx context.Context, prompt AudioPrompt) (AudioResponse, error)
+}
+
 // FileProvider is implemented by providers that support storing files before they are referenced by prompts.
 type FileProvider interface {
-	// PutFile uploads the given file and returns the provider-managed file reference.
-	PutFile(ctx context.Context, file StorableFile) (StoredFileResponse, error)
+	// PutFile uploads the given file and returns the provider-managed file handle.
+	// Providers may return an ID-only handle with empty MimeType()/Content().
+	PutFile(ctx context.Context, file StorableFile) (FileResponse, error)
 	// GetFile resolves a previously stored provider-managed file.
 	GetFile(ctx context.Context, id string) (FileResponse, error)
 	// DeleteFile removes a previously stored provider-managed file.

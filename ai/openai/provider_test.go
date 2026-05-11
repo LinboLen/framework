@@ -81,6 +81,14 @@ type capturedImageRequest struct {
 	files         []capturedImageFile
 }
 
+type capturedAudioRequest struct {
+	path          string
+	authorization string
+	contentType   string
+	body          map[string]any
+	accept        string
+}
+
 type capturedImageFile struct {
 	fieldName string
 	fileName  string
@@ -135,6 +143,7 @@ func TestNewOpenAIUnmarshalError(t *testing.T) {
 			expectConfig: func() *contractsai.ProviderConfig {
 				cfg := contractsai.ProviderConfig{Key: "test-key", Url: "http://localhost:1234"}
 				cfg.Models.Text.Default = DefaultTextModel
+				cfg.Models.Audio.Default = DefaultAudioModel
 				cfg.Models.Image.Default = DefaultImageModel
 				return &cfg
 			}(),
@@ -153,6 +162,7 @@ func TestNewOpenAIUnmarshalError(t *testing.T) {
 			expectConfig: func() *contractsai.ProviderConfig {
 				cfg := contractsai.ProviderConfig{Key: "test-key"}
 				cfg.Models.Text.Default = "gpt-custom"
+				cfg.Models.Audio.Default = DefaultAudioModel
 				cfg.Models.Image.Default = "gpt-image-custom"
 				return &cfg
 			}(),
@@ -290,6 +300,125 @@ func TestProviderImage(t *testing.T) {
 			assert.Equal(t, "Bearer test-key", req.authorization)
 			assert.Equal(t, tt.expectForm, req.formValues)
 			assert.Equal(t, tt.expectFiles, req.files)
+		})
+	}
+}
+
+func TestProviderAudio(t *testing.T) {
+	tests := []struct {
+		name          string
+		prompt        contractsai.AudioPrompt
+		status        int
+		responseBody  string
+		responseType  string
+		expectError   error
+		expectPath    string
+		expectBody    map[string]any
+		expectMime    string
+		expectContent []byte
+	}{
+		{
+			name: "generates audio with defaults",
+			prompt: contractsai.AudioPrompt{
+				Prompt: "welcome to goravel",
+			},
+			status:       http.StatusOK,
+			responseBody: "audio-bytes",
+			expectPath:   "/audio/speech",
+			expectBody: map[string]any{
+				"input":           "welcome to goravel",
+				"model":           "gpt-audio-default",
+				"voice":           "alloy",
+				"response_format": "mp3",
+			},
+			expectMime:    "audio/mpeg",
+			expectContent: []byte("audio-bytes"),
+		},
+		{
+			name: "uses explicit voice instructions and timeout",
+			prompt: contractsai.AudioPrompt{
+				Prompt:       "welcome to goravel",
+				Model:        "gpt-4o-mini-tts",
+				Voice:        "default-male",
+				Instructions: "Speak slowly",
+				Timeout:      2 * time.Second,
+			},
+			status:       http.StatusOK,
+			responseBody: "audio-bytes",
+			responseType: "audio/mpeg; charset=utf-8",
+			expectPath:   "/audio/speech",
+			expectBody: map[string]any{
+				"input":           "welcome to goravel",
+				"model":           "gpt-4o-mini-tts",
+				"voice":           "ash",
+				"instructions":    "Speak slowly",
+				"response_format": "mp3",
+			},
+			expectMime:    "audio/mpeg",
+			expectContent: []byte("audio-bytes"),
+		},
+		{
+			name:        "returns error for empty prompt",
+			prompt:      contractsai.AudioPrompt{},
+			expectError: errors.AIAudioPromptRequired,
+		},
+		{
+			name: "returns error for empty response body",
+			prompt: contractsai.AudioPrompt{
+				Prompt: "welcome to goravel",
+			},
+			status:       http.StatusOK,
+			responseBody: "",
+			expectError:  errors.AIAudioResponseIsEmpty,
+		},
+		{
+			name: "uses response format mime fallback",
+			prompt: contractsai.AudioPrompt{
+				Prompt: "welcome to goravel",
+			},
+			status:       http.StatusOK,
+			responseBody: "audio-bytes",
+			responseType: "",
+			expectPath:   "/audio/speech",
+			expectBody: map[string]any{
+				"input":           "welcome to goravel",
+				"model":           "gpt-audio-default",
+				"voice":           "alloy",
+				"response_format": "mp3",
+			},
+			expectMime:    "audio/mpeg",
+			expectContent: []byte("audio-bytes"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captured := make(chan capturedAudioRequest, 1)
+			server := newAudioServer(t, tt.status, tt.responseBody, tt.responseType, captured)
+			defer server.Close()
+
+			provider := &Provider{client: goopenai.NewClient(option.WithAPIKey("test-key"), option.WithBaseURL(server.URL))}
+			provider.config.Models.Audio.Default = "gpt-audio-default"
+
+			response, err := provider.Audio(context.Background(), tt.prompt)
+			assert.Equal(t, tt.expectError, err)
+			if tt.expectError != nil {
+				assert.Nil(t, response)
+				return
+			}
+
+			require.NotNil(t, response)
+			content, contentErr := response.Content()
+			require.NoError(t, contentErr)
+			assert.Equal(t, tt.expectContent, content)
+			assert.Equal(t, tt.expectMime, response.MimeType())
+
+			req, ok := readCapturedAudioRequest(t, captured)
+			require.True(t, ok, "expected audio request payload")
+			assert.Equal(t, tt.expectPath, req.path)
+			assert.Equal(t, "Bearer test-key", req.authorization)
+			assert.Equal(t, "application/octet-stream", req.accept)
+			assert.Equal(t, tt.expectBody, req.body)
 		})
 	}
 }
@@ -692,7 +821,7 @@ func (attachment namedAttachment) MimeType() string                 { return att
 func (attachment namedAttachment) Content(context.Context) ([]byte, error) {
 	return attachment.content, nil
 }
-func (attachment namedAttachment) Put(context.Context, ...contractsai.Option) (contractsai.StoredFileResponse, error) {
+func (attachment namedAttachment) Put(context.Context, ...contractsai.Option) (contractsai.FileResponse, error) {
 	return nil, nil
 }
 
@@ -704,7 +833,7 @@ func (unsupportedAttachment) MimeType() string { return "audio/mpeg" }
 func (unsupportedAttachment) Content(context.Context) ([]byte, error) {
 	return []byte("audio"), nil
 }
-func (unsupportedAttachment) Put(context.Context, ...contractsai.Option) (contractsai.StoredFileResponse, error) {
+func (unsupportedAttachment) Put(context.Context, ...contractsai.Option) (contractsai.FileResponse, error) {
 	return nil, nil
 }
 
@@ -896,7 +1025,7 @@ func TestProviderStream(t *testing.T) {
 			var thenText string
 			var thenUsage usageCheck
 			var thenToolCalls []contractsai.ToolCall
-			stream.Then(func(resp contractsai.Response) {
+			stream.Then(func(resp contractsai.AgentResponse) {
 				thenCalled++
 				thenText = resp.Text()
 				thenToolCalls = resp.ToolCalls()
@@ -977,6 +1106,10 @@ func TestProviderPutFile(t *testing.T) {
 			response, err := provider.PutFile(context.Background(), file)
 			require.NoError(t, err)
 			assert.Equal(t, "file-123", response.ID())
+			assert.Empty(t, response.MimeType())
+			content, err := response.Content(context.Background())
+			require.NoError(t, err)
+			assert.Nil(t, content)
 
 			req, ok := readCapturedFileUploadRequest(t, captured)
 			require.True(t, ok, "expected upload request payload")
@@ -1386,6 +1519,49 @@ func readCapturedImageRequest(t *testing.T, captured <-chan capturedImageRequest
 		return req, true
 	default:
 		return capturedImageRequest{}, false
+	}
+}
+
+func newAudioServer(t *testing.T, status int, responseBody, responseType string, captured chan<- capturedAudioRequest) *httptest.Server {
+	t.Helper()
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		defer errors.Ignore(r.Body.Close)
+
+		capturedRequest := capturedAudioRequest{
+			path:          r.URL.Path,
+			authorization: r.Header.Get("Authorization"),
+			contentType:   r.Header.Get("Content-Type"),
+			body:          decodeBodyMap(t, r),
+			accept:        r.Header.Get("Accept"),
+		}
+
+		select {
+		case captured <- capturedRequest:
+		default:
+		}
+
+		if responseType != "" {
+			w.Header().Set("Content-Type", responseType)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(responseBody))
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/audio/speech", handler)
+	mux.HandleFunc("/v1/audio/speech", handler)
+
+	return httptest.NewServer(mux)
+}
+
+func readCapturedAudioRequest(t *testing.T, captured <-chan capturedAudioRequest) (capturedAudioRequest, bool) {
+	t.Helper()
+	select {
+	case req := <-captured:
+		return req, true
+	default:
+		return capturedAudioRequest{}, false
 	}
 }
 

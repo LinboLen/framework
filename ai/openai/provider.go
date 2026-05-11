@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"path/filepath"
 	"strings"
 
@@ -26,6 +27,7 @@ import (
 // The OpenAI provider will be moved into a separate package in the future.
 
 const DefaultTextModel = "gpt-5.4"
+const DefaultAudioModel = "gpt-4o-mini-tts"
 const DefaultImageModel = "gpt-image-2"
 
 const providerStateResponseID = "openai.response_id"
@@ -49,11 +51,44 @@ func NewOpenAI(config contractsconfig.Config, provider string) (*Provider, error
 	if providerConfig.Models.Text.Default == "" {
 		providerConfig.Models.Text.Default = DefaultTextModel
 	}
+	if providerConfig.Models.Audio.Default == "" {
+		providerConfig.Models.Audio.Default = DefaultAudioModel
+	}
 	if providerConfig.Models.Image.Default == "" {
 		providerConfig.Models.Image.Default = DefaultImageModel
 	}
 
 	return &Provider{client: goopenai.NewClient(opts...), config: providerConfig}, nil
+}
+
+func (r *Provider) Audio(ctx context.Context, prompt contractsai.AudioPrompt) (contractsai.AudioResponse, error) {
+	if prompt.Prompt == "" {
+		return nil, errors.AIAudioPromptRequired
+	}
+
+	requestOptions := make([]option.RequestOption, 0, 1)
+	if prompt.Timeout > 0 {
+		requestOptions = append(requestOptions, option.WithRequestTimeout(prompt.Timeout))
+	}
+
+	params := goopenai.AudioSpeechNewParams{
+		Input: prompt.Prompt,
+		Model: goopenai.SpeechModel(r.resolveAudioModel(prompt.Model)),
+		Voice: goopenai.AudioSpeechNewParamsVoiceUnion{
+			OfString: param.NewOpt(r.resolveAudioVoice(prompt.Voice)),
+		},
+		ResponseFormat: goopenai.AudioSpeechNewParamsResponseFormatMP3,
+	}
+	if prompt.Instructions != "" {
+		params.Instructions = param.NewOpt(prompt.Instructions)
+	}
+
+	response, err := r.client.Audio.Speech.New(ctx, params, requestOptions...)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.parseAudioResponse(response, params.ResponseFormat)
 }
 
 func (r *Provider) Image(ctx context.Context, prompt contractsai.ImagePrompt) (contractsai.ImageResponse, error) {
@@ -123,7 +158,7 @@ func (r *Provider) Image(ctx context.Context, prompt contractsai.ImagePrompt) (c
 	return r.parseImageResponse(response)
 }
 
-func (r *Provider) Prompt(ctx context.Context, prompt contractsai.AgentPrompt) (contractsai.Response, error) {
+func (r *Provider) Prompt(ctx context.Context, prompt contractsai.AgentPrompt) (contractsai.AgentResponse, error) {
 	params, err := r.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
@@ -139,25 +174,21 @@ func (r *Provider) Prompt(ctx context.Context, prompt contractsai.AgentPrompt) (
 		prompt.ProviderState.Set(providerStateResponseID, completion.ID)
 	}
 
-	return &response{
-		text:      text,
-		toolCalls: toolCalls,
-		usage:     r.parseUsage(completion.Usage),
-	}, nil
+	return frameworkai.NewTextResponse(text, r.parseUsage(completion.Usage), toolCalls), nil
 }
 
-func (r *Provider) Stream(ctx context.Context, prompt contractsai.AgentPrompt) (contractsai.StreamableResponse, error) {
+func (r *Provider) Stream(ctx context.Context, prompt contractsai.AgentPrompt) (contractsai.StreamableAgentResponse, error) {
 	params, err := r.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}
 
-	return frameworkai.NewStreamableResponse(ctx, func(streamCtx context.Context, emit func(contractsai.StreamEvent) error) (contractsai.Response, error) {
+	return frameworkai.NewStreamableResponse(ctx, func(streamCtx context.Context, emit func(contractsai.StreamEvent) error) (contractsai.AgentResponse, error) {
 		stream := r.client.Responses.NewStreaming(streamCtx, params)
 		defer errors.Ignore(stream.Close)
 
 		text := strings.Builder{}
-		currentUsage := &usage{}
+		currentUsage := contractsai.Usage(frameworkai.NewUsage(0, 0, 0))
 		responseID := ""
 		var toolCalls []contractsai.ToolCall
 
@@ -206,15 +237,11 @@ func (r *Provider) Stream(ctx context.Context, prompt contractsai.AgentPrompt) (
 			prompt.ProviderState.Set(providerStateResponseID, responseID)
 		}
 
-		return &response{
-			text:      text.String(),
-			toolCalls: toolCalls,
-			usage:     currentUsage,
-		}, nil
+		return frameworkai.NewTextResponse(text.String(), currentUsage, toolCalls), nil
 	}), nil
 }
 
-func (r *Provider) PutFile(ctx context.Context, file contractsai.StorableFile) (contractsai.StoredFileResponse, error) {
+func (r *Provider) PutFile(ctx context.Context, file contractsai.StorableFile) (contractsai.FileResponse, error) {
 	content, err := file.Content(ctx)
 	if err != nil {
 		return nil, err
@@ -230,7 +257,7 @@ func (r *Provider) PutFile(ctx context.Context, file contractsai.StorableFile) (
 		return nil, err
 	}
 
-	return &storedFileResponse{id: upload.ID}, nil
+	return frameworkai.NewFileResponse(upload.ID, "", nil), nil
 }
 
 func (r *Provider) GetFile(ctx context.Context, id string) (contractsai.FileResponse, error) {
@@ -255,7 +282,7 @@ func (r *Provider) GetFile(ctx context.Context, id string) (contractsai.FileResp
 		mimeType = response.Header.Get("Content-Type")
 	}
 
-	return &fileResponse{id: file.ID, mimeType: mimeType, content: content}, nil
+	return frameworkai.NewFileResponse(file.ID, mimeType, content), nil
 }
 
 func (r *Provider) DeleteFile(ctx context.Context, id string) error {
@@ -304,6 +331,25 @@ func (r *Provider) resolveModel(model string) string {
 	}
 
 	return r.config.Models.Text.Default
+}
+
+func (r *Provider) resolveAudioModel(model string) string {
+	if model != "" {
+		return model
+	}
+
+	return r.config.Models.Audio.Default
+}
+
+func (r *Provider) resolveAudioVoice(voice string) string {
+	switch voice {
+	case "", "default-female":
+		return "alloy"
+	case "default-male":
+		return "ash"
+	default:
+		return voice
+	}
 }
 
 func (r *Provider) resolveImageModel(model string) string {
@@ -670,12 +716,8 @@ func (r *Provider) parseOutput(raw []responses.ResponseOutputItemUnion) (string,
 	return text.String(), toolCalls
 }
 
-func (r *Provider) parseUsage(raw responses.ResponseUsage) *usage {
-	return &usage{
-		input:  int(raw.InputTokens),
-		output: int(raw.OutputTokens),
-		total:  int(raw.TotalTokens),
-	}
+func (r *Provider) parseUsage(raw responses.ResponseUsage) contractsai.Usage {
+	return frameworkai.NewUsage(int(raw.InputTokens), int(raw.OutputTokens), int(raw.TotalTokens))
 }
 
 func (r *Provider) parseImageResponse(response *goopenai.ImagesResponse) (contractsai.ImageResponse, error) {
@@ -696,15 +738,11 @@ func (r *Provider) parseImageResponse(response *goopenai.ImagesResponse) (contra
 		mimeType = "image/png"
 	}
 
-	return &imageResponse{
-		mimeType: mimeType,
-		content:  content,
-		usage: &usage{
-			input:  int(response.Usage.InputTokens),
-			output: int(response.Usage.OutputTokens),
-			total:  int(response.Usage.TotalTokens),
-		},
-	}, nil
+	return frameworkai.NewImageResponse(
+		content,
+		mimeType,
+		frameworkai.NewUsage(int(response.Usage.InputTokens), int(response.Usage.OutputTokens), int(response.Usage.TotalTokens)),
+	), nil
 }
 
 func (r *Provider) resolveImageContent(image goopenai.Image) ([]byte, error) {
@@ -730,5 +768,52 @@ func (r *Provider) resolveImageMimeType(format goopenai.ImagesResponseOutputForm
 		return "image/png"
 	default:
 		return ""
+	}
+}
+
+func (r *Provider) parseAudioResponse(response *http.Response, format goopenai.AudioSpeechNewParamsResponseFormat) (contractsai.AudioResponse, error) {
+	if response == nil || response.Body == nil {
+		return nil, errors.AIAudioResponseIsEmpty
+	}
+	defer errors.Ignore(response.Body.Close)
+
+	content, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if len(content) == 0 {
+		return nil, errors.AIAudioResponseIsEmpty
+	}
+
+	mimeType := response.Header.Get("Content-Type")
+	if mediaType, _, err := mime.ParseMediaType(mimeType); err == nil && mediaType != "" {
+		mimeType = mediaType
+	}
+	if mimeType == "" || mimeType == "text/plain" || mimeType == "application/octet-stream" {
+		mimeType = r.resolveAudioMimeType(format)
+	}
+	if mimeType == "" {
+		mimeType = "audio/mpeg"
+	}
+
+	return frameworkai.NewAudioResponse(content, mimeType, frameworkai.NewUsage(0, 0, 0)), nil
+}
+
+func (r *Provider) resolveAudioMimeType(format goopenai.AudioSpeechNewParamsResponseFormat) string {
+	switch format {
+	case goopenai.AudioSpeechNewParamsResponseFormatWAV:
+		return "audio/wav"
+	case goopenai.AudioSpeechNewParamsResponseFormatFLAC:
+		return "audio/flac"
+	case goopenai.AudioSpeechNewParamsResponseFormatAAC:
+		return "audio/aac"
+	case goopenai.AudioSpeechNewParamsResponseFormatOpus:
+		return "audio/opus"
+	case goopenai.AudioSpeechNewParamsResponseFormatPCM:
+		return "audio/pcm"
+	case goopenai.AudioSpeechNewParamsResponseFormatMP3:
+		fallthrough
+	default:
+		return "audio/mpeg"
 	}
 }

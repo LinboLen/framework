@@ -19,22 +19,11 @@ type imageRequest struct {
 	timeout     time.Duration
 }
 
-func NewImageRequest(ctx context.Context, app *Application, prompt string, options ...contractsai.Option) contractsai.ImageRequest {
-	resolvedOptions := &contractsai.Options{}
-	for _, option := range options {
-		if option == nil {
-			continue
-		}
-
-		option(resolvedOptions)
-	}
-
+func NewImageRequest(ctx context.Context, app *Application, prompt string) contractsai.ImageRequest {
 	return &imageRequest{
-		ctx:      ctx,
-		app:      app,
-		prompt:   prompt,
-		provider: resolvedOptions.Provider,
-		model:    resolvedOptions.Model,
+		ctx:    ctx,
+		app:    app,
+		prompt: prompt,
 	}
 }
 
@@ -76,6 +65,24 @@ func (r *imageRequest) Attachments(attachments ...contractsai.Attachment) contra
 func (r *imageRequest) Timeout(timeout time.Duration) contractsai.ImageRequest {
 	r.timeout = timeout
 	return r
+}
+
+func (r *imageRequest) Store(disk ...string) (string, error) {
+	response, err := r.Generate()
+	if err != nil {
+		return "", err
+	}
+
+	return response.Store(disk...)
+}
+
+func (r *imageRequest) StoreAs(path string, disk ...string) (string, error) {
+	response, err := r.Generate()
+	if err != nil {
+		return "", err
+	}
+
+	return response.StoreAs(path, disk...)
 }
 
 func (r *imageRequest) Generate() (contractsai.ImageResponse, error) {

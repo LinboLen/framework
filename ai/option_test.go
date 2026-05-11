@@ -346,13 +346,13 @@ func TestWithStreamRender(t *testing.T) {
 
 type optionTestMiddleware struct{}
 
-func (m *optionTestMiddleware) Handle(ctx context.Context, prompt contractsai.AgentPrompt, next contractsai.Next) (contractsai.Response, error) {
+func (m *optionTestMiddleware) Handle(ctx context.Context, prompt contractsai.AgentPrompt, next contractsai.Next) (contractsai.AgentResponse, error) {
 	return next(ctx, prompt)
 }
 
 type optionNilTestMiddleware struct{}
 
-func (m *optionNilTestMiddleware) Handle(ctx context.Context, prompt contractsai.AgentPrompt, next contractsai.Next) (contractsai.Response, error) {
+func (m *optionNilTestMiddleware) Handle(ctx context.Context, prompt contractsai.AgentPrompt, next contractsai.Next) (contractsai.AgentResponse, error) {
 	return next(ctx, prompt)
 }
 
@@ -368,6 +368,6 @@ func (a *optionNilTestAttachment) MimeType() string { return "" }
 
 func (a *optionNilTestAttachment) Content(context.Context) ([]byte, error) { return nil, nil }
 
-func (a *optionNilTestAttachment) Put(context.Context, ...contractsai.Option) (contractsai.StoredFileResponse, error) {
+func (a *optionNilTestAttachment) Put(context.Context, ...contractsai.Option) (contractsai.FileResponse, error) {
 	return nil, nil
 }
