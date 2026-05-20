@@ -48,6 +48,29 @@ func (r *User) Factory() factory.Factory {
 	return &UserFactory{}
 }
 
+func (r *User) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Address": contractsorm.HasOne{
+			Related: &Address{},
+		},
+		"Books": contractsorm.HasMany{
+			Related: &Book{},
+		},
+		"House": contractsorm.MorphOne{
+			Related: &House{},
+			Name:    "houseable",
+		},
+		"Phones": contractsorm.MorphMany{
+			Related: &Phone{},
+			Name:    "phoneable",
+		},
+		"Roles": contractsorm.Many2Many{
+			Related: &Role{},
+			Table:   "role_user",
+		},
+	}
+}
+
 func (r *User) DispatchesEvents() map[contractsorm.EventType]func(contractsorm.Event) error {
 	return map[contractsorm.EventType]func(contractsorm.Event) error{
 		contractsorm.EventCreating: func(event contractsorm.Event) error {
