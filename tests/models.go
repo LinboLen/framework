@@ -35,11 +35,11 @@ type User struct {
 	Name    string
 	Bio     *string
 	Avatar  string
-	Address *Address
-	Books   []*Book
-	House   *House   `gorm:"polymorphic:Houseable"`
-	Phones  []*Phone `gorm:"polymorphic:Phoneable"`
-	Roles   []*Role  `gorm:"many2many:role_user"`
+	Address *Address `gorm:"-"`
+	Books   []*Book  `gorm:"-"`
+	House   *House   `gorm:"-"`
+	Phones  []*Phone `gorm:"-"`
+	Roles   []*Role  `gorm:"-"`
 	Ratio   float64
 	age     int
 }
@@ -58,11 +58,11 @@ func (r *User) Relations() map[string]contractsorm.Relation {
 		},
 		"House": contractsorm.MorphOne{
 			Related: &House{},
-			Name:    "houseable",
+			Name:    "Houseable",
 		},
 		"Phones": contractsorm.MorphMany{
 			Related: &Phone{},
-			Name:    "phoneable",
+			Name:    "Phoneable",
 		},
 		"Roles": contractsorm.Many2Many{
 			Related: &Role{},
@@ -441,7 +441,16 @@ type Role struct {
 	Model
 	Name   string
 	Avatar string
-	Users  []*User `gorm:"many2many:role_user"`
+	Users  []*User `gorm:"-"`
+}
+
+func (r *Role) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"Users": contractsorm.Many2Many{
+			Related: &User{},
+			Table:   "role_user",
+		},
+	}
 }
 
 type Address struct {
@@ -449,15 +458,34 @@ type Address struct {
 	UserID   uint
 	Name     string
 	Province string
-	User     *User
+	User     *User `gorm:"-"`
+}
+
+func (r *Address) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"User": contractsorm.BelongsTo{
+			Related: &User{},
+		},
+	}
 }
 
 type Book struct {
 	Model
 	UserID uint
 	Name   string
-	User   *User
-	Author *Author
+	User   *User   `gorm:"-"`
+	Author *Author `gorm:"-"`
+}
+
+func (r *Book) Relations() map[string]contractsorm.Relation {
+	return map[string]contractsorm.Relation{
+		"User": contractsorm.BelongsTo{
+			Related: &User{},
+		},
+		"Author": contractsorm.HasOne{
+			Related: &Author{},
+		},
+	}
 }
 
 type Author struct {
