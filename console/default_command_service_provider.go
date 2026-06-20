@@ -29,7 +29,7 @@ func (r *DefaultCommandServiceProvider) registerCommands(app foundation.Applicat
 	configFacade := app.MakeConfig()
 	processFacade := app.MakeProcess()
 	artisanFacade.Register([]consolecontract.Command{
-		console.NewListCommand(),
+		//console.NewListCommand(),
 		console.NewKeyGenerateCommand(configFacade),
 		console.NewMakeCommand(),
 		console.NewBuildCommand(configFacade, processFacade),

@@ -1,7 +1,9 @@
 package console
 
 import (
+	"github.com/goravel/framework/console/console"
 	"github.com/goravel/framework/contracts/binding"
+	consolecontract "github.com/goravel/framework/contracts/console"
 	"github.com/goravel/framework/contracts/foundation"
 )
 
@@ -29,4 +31,8 @@ func (r *ServiceProvider) Register(app foundation.Application) {
 }
 
 func (r *ServiceProvider) Boot(app foundation.Application) {
+	artisanFacade := app.MakeArtisan()
+	artisanFacade.Register([]consolecontract.Command{
+		console.NewListCommand(),
+	})
 }
