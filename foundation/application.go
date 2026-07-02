@@ -715,20 +715,13 @@ func setEnv() {
 		strings.HasSuffix(args[0], ".test.exe") ||
 		isTestDebugBinary {
 		support.RuntimeMode = support.RuntimeTest
-		support.DontVerifyAppKey = true
 	} else {
 		if len(args) >= 2 {
 			for _, arg := range args[1:] {
 				if arg == "artisan" {
 					support.RuntimeMode = support.RuntimeArtisan
-
-					if len(args) == 2 {
-						// Run go run . artisan without any command
-						support.DontVerifyAppKey = true
-					}
+					break
 				}
-
-				support.DontVerifyAppKey = support.DontVerifyAppKey || slices.Contains(support.DontVerifyAppKeyWhitelist, arg)
 			}
 		}
 	}

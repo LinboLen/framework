@@ -77,9 +77,6 @@ var (
 	EnvFileEncryptPath   = ".env.encrypted"
 	EnvFileEncryptCipher = "AES-256-CBC"
 
-	DontVerifyAppKey          = false
-	DontVerifyAppKeyWhitelist = []string{"about", "list", "key:generate", "jwt:secret", "env:decrypt", "package:install"}
-
 	Config = Configuration{
 		Paths: Paths{
 			App:         "app",

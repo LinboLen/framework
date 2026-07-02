@@ -1117,14 +1117,12 @@ func TestDoneOnceGuarantee(t *testing.T) {
 func backupSetEnvGlobalState(t *testing.T) {
 	originalArgs := append([]string(nil), os.Args...)
 	originalRuntimeMode := support.RuntimeMode
-	originalDontVerifyAppKey := support.DontVerifyAppKey
 	originalEnvFilePath := support.EnvFilePath
 	originalRelativePath := support.RelativePath
 
 	t.Cleanup(func() {
 		os.Args = originalArgs
 		support.RuntimeMode = originalRuntimeMode
-		support.DontVerifyAppKey = originalDontVerifyAppKey
 		support.EnvFilePath = originalEnvFilePath
 		support.RelativePath = originalRelativePath
 	})
@@ -1226,7 +1224,6 @@ func TestSetEnv_DebugBinaryWithoutTestArgs(t *testing.T) {
 	backupSetEnvGlobalState(t)
 
 	support.RuntimeMode = ""
-	support.DontVerifyAppKey = false
 	support.EnvFilePath = ".env"
 	support.RelativePath = ""
 	os.Args = []string{"/tmp/__debug_bin"}
@@ -1234,7 +1231,6 @@ func TestSetEnv_DebugBinaryWithoutTestArgs(t *testing.T) {
 	setEnv()
 
 	assert.Equal(t, "", support.RuntimeMode)
-	assert.False(t, support.DontVerifyAppKey)
 	assert.Equal(t, ".env", support.EnvFilePath)
 }
 
@@ -1242,7 +1238,6 @@ func TestSetEnv_DebugBinaryWithTestArgs(t *testing.T) {
 	backupSetEnvGlobalState(t)
 
 	support.RuntimeMode = ""
-	support.DontVerifyAppKey = false
 	support.EnvFilePath = ".env"
 	support.RelativePath = ""
 	os.Args = []string{"/tmp/__debug_bin", "-test.v=true"}
@@ -1250,5 +1245,4 @@ func TestSetEnv_DebugBinaryWithTestArgs(t *testing.T) {
 	setEnv()
 
 	assert.Equal(t, support.RuntimeTest, support.RuntimeMode)
-	assert.True(t, support.DontVerifyAppKey)
 }
